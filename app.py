@@ -26,7 +26,7 @@ ROOT = Path(__file__).parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import APP_ICON, APP_TITLE
+from config import APP_ICON, APP_TITLE, CREDENTIALS_DICT, CREDENTIALS_FILE
 from src import cache
 from views import explorer, mtd, overview, weekly
 
@@ -357,6 +357,23 @@ def render_sidebar() -> str:
 
         st.divider()
         st.caption("SEO+ LAM · Adidas Search Intelligence")
+
+        # ── 🔧 Credential diagnostics (remove once auth works) ─────────
+        with st.expander("🔧 Auth diagnostics", expanded=False):
+            if CREDENTIALS_DICT is not None:
+                st.success("✅ CREDENTIALS_DICT loaded from secrets")
+                keys = list(CREDENTIALS_DICT.keys())
+                st.caption(f"Keys: {keys}")
+                pk = CREDENTIALS_DICT.get("private_key", "")
+                st.caption(f"private_key starts: {repr(pk[:60])}")
+                st.caption(f"private_key ends:   {repr(pk[-60:])}")
+                has_real_newlines = "\n" in pk
+                st.caption(f"Real newlines in key: {has_real_newlines}")
+            else:
+                st.error("❌ CREDENTIALS_DICT is None — falling back to file")
+                st.caption(f"Looking for file: {CREDENTIALS_FILE}")
+                import os
+                st.caption(f"File exists: {os.path.exists(CREDENTIALS_FILE)}")
 
     # Strip emoji prefix before returning clean page name
     return page.split("  ")[-1]
