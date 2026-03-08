@@ -360,31 +360,42 @@ def render_sidebar() -> str:
 
         # ── 🔧 Credential diagnostics (remove once auth works) ─────────
         with st.expander("🔧 Auth diagnostics", expanded=False):
-            # 1 — What does st.secrets actually contain?
-            st.markdown("**st.secrets inspection:**")
+            import json as _dbg_json, os
+
+            # 1 — Raw secret value inspection
+            st.markdown("**1 · Raw secret value:**")
             try:
-                top_keys = list(st.secrets.keys())
-                st.caption(f"Top-level keys: {top_keys}")
-                if "gsc_credentials" in st.secrets:
-                    sub_keys = list(st.secrets["gsc_credentials"].keys())
-                    st.caption(f"gsc_credentials sub-keys: {sub_keys}")
-                else:
-                    st.error("'gsc_credentials' NOT found in secrets!")
+                raw_val = st.secrets["gsc_credentials"]["json"]
+                raw_str = str(raw_val)
+                st.caption(f"Type: {type(raw_val).__name__}, Len: {len(raw_str)}")
+                st.caption(f"First 80 chars: {repr(raw_str[:80])}")
+                st.caption(f"Last  40 chars: {repr(raw_str[-40:])}")
             except Exception as exc:
-                st.error(f"Cannot read st.secrets: {exc}")
+                st.error(f"Cannot read raw value: {exc}")
+                raw_str = None
 
             st.divider()
 
-            # 2 — Was CREDENTIALS_DICT populated by config.py?
-            st.markdown("**config.py result:**")
+            # 2 — json.loads() test
+            st.markdown("**2 · json.loads() test:**")
+            if raw_str:
+                try:
+                    parsed = _dbg_json.loads(raw_str)
+                    st.success(f"✅ json.loads() OK — keys: {list(parsed.keys())}")
+                    pk = parsed.get("private_key", "")
+                    st.caption(f"private_key has real newlines: {chr(10) in pk}")
+                    st.caption(f"private_key[:60]: {repr(pk[:60])}")
+                except Exception as exc:
+                    st.error(f"❌ json.loads() FAILED: {exc}")
+
+            st.divider()
+
+            # 3 — config.py result
+            st.markdown("**3 · config.py CREDENTIALS_DICT:**")
             if CREDENTIALS_DICT is not None:
-                st.success("✅ CREDENTIALS_DICT loaded")
-                pk = CREDENTIALS_DICT.get("private_key", "")
-                st.caption(f"Has real newlines: {chr(10) in pk}")
-                st.caption(f"Key starts: {repr(pk[:40])}")
+                st.success("✅ Loaded")
             else:
-                st.error("❌ CREDENTIALS_DICT is None")
-                import os
+                st.error("❌ None — json.loads() failed at import time")
                 st.caption(f"Fallback file exists: {os.path.exists(CREDENTIALS_FILE)}")
 
     # Strip emoji prefix before returning clean page name
