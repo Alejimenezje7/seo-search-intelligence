@@ -16,6 +16,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 from config import (
+    CREDENTIALS_DICT,
     CREDENTIALS_FILE,
     DOMAINS,
     FAST_ROW_LIMIT,
@@ -30,11 +31,23 @@ logger = logging.getLogger(__name__)
 # ── Auth ───────────────────────────────────────────────────────────────────────
 
 def build_service():
-    """Build and return an authenticated GSC API service client."""
-    credentials = service_account.Credentials.from_service_account_file(
-        CREDENTIALS_FILE,
-        scopes=[OAUTH_SCOPE],
-    )
+    """
+    Build and return an authenticated GSC API service client.
+
+    Uses CREDENTIALS_DICT (from Streamlit Cloud secrets) when available so the
+    private key is never written to a temporary file — avoiding PEM parse errors.
+    Falls back to loading CREDENTIALS_FILE from disk for local / server deployments.
+    """
+    if CREDENTIALS_DICT is not None:
+        credentials = service_account.Credentials.from_service_account_info(
+            CREDENTIALS_DICT,
+            scopes=[OAUTH_SCOPE],
+        )
+    else:
+        credentials = service_account.Credentials.from_service_account_file(
+            CREDENTIALS_FILE,
+            scopes=[OAUTH_SCOPE],
+        )
     return build("searchconsole", "v1", credentials=credentials)
 
 

@@ -5,9 +5,7 @@ Central configuration for the Adidas Search Intelligence Platform.
 All domain lists, thresholds, and environment-driven settings live here.
 """
 
-import json
 import os
-import tempfile
 
 from dotenv import load_dotenv
 
@@ -15,50 +13,29 @@ load_dotenv()
 
 
 # ── Credentials ────────────────────────────────────────────────────────────────
-def _resolve_credentials() -> str:
-    """
-    Resolve the path to the GSC service-account credentials file.
+# CREDENTIALS_FILE  → path to credentials.json (local / server deployments)
+# CREDENTIALS_DICT  → dict with service-account info (Streamlit Cloud secrets)
+#
+# extractor.build_service() checks CREDENTIALS_DICT first; if None it falls
+# back to loading CREDENTIALS_FILE from disk.  This avoids writing the PEM key
+# to a temporary file (which corrupts the key on Streamlit Cloud).
 
-    Priority:
-      1. Local file at the path given by GSC_CREDENTIALS_FILE env var (default: credentials.json)
-      2. Streamlit Cloud secrets under the key [gsc_credentials]
+CREDENTIALS_FILE: str = os.getenv("GSC_CREDENTIALS_FILE", "credentials.json")
+CREDENTIALS_DICT: dict | None = None   # populated below when running on Streamlit Cloud
 
-    On Streamlit Cloud the file doesn't exist on disk, so we write the secret
-    content to a temporary file and return that path.
-    """
-    # 1 — Local file (dev + Railway + any server deployment)
-    local_path = os.getenv("GSC_CREDENTIALS_FILE", "credentials.json")
-    if os.path.exists(local_path):
-        return local_path
+try:
+    import streamlit as st  # only importable when the Streamlit runtime is active
 
-    # 2 — Streamlit Cloud secrets
-    try:
-        import streamlit as st  # only available when running inside Streamlit
+    if hasattr(st, "secrets") and "gsc_credentials" in st.secrets:
+        _creds = dict(st.secrets["gsc_credentials"])
+        # TOML double-quoted strings preserve \n as the two-char sequence "\" + "n".
+        # The Google auth library needs real newline characters inside the PEM block.
+        if "private_key" in _creds:
+            _creds["private_key"] = _creds["private_key"].replace("\\n", "\n")
+        CREDENTIALS_DICT = _creds
+except Exception:
+    pass  # Not running inside Streamlit, or secret is missing — use file path instead
 
-        if hasattr(st, "secrets") and "gsc_credentials" in st.secrets:
-            creds = dict(st.secrets["gsc_credentials"])
-            # Streamlit TOML secrets store \n as a literal two-char sequence.
-            # The Google auth library needs real newline characters in the PEM key.
-            if "private_key" in creds:
-                creds["private_key"] = creds["private_key"].replace("\\n", "\n")
-            tmp = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False, encoding="utf-8"
-            )
-            json.dump(creds, tmp)
-            tmp.flush()
-            return tmp.name
-    except Exception:
-        pass  # streamlit not available or secret missing
-
-    raise FileNotFoundError(
-        "GSC credentials not found. "
-        "Place credentials.json in the project root, set the "
-        "GSC_CREDENTIALS_FILE env var, or configure [gsc_credentials] "
-        "in Streamlit Cloud secrets."
-    )
-
-
-CREDENTIALS_FILE = _resolve_credentials()
 OAUTH_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 
 # ── Domains ────────────────────────────────────────────────────────────────────
