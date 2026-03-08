@@ -37,6 +37,10 @@ def _resolve_credentials() -> str:
 
         if hasattr(st, "secrets") and "gsc_credentials" in st.secrets:
             creds = dict(st.secrets["gsc_credentials"])
+            # Streamlit TOML secrets store \n as a literal two-char sequence.
+            # The Google auth library needs real newline characters in the PEM key.
+            if "private_key" in creds:
+                creds["private_key"] = creds["private_key"].replace("\\n", "\n")
             tmp = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", delete=False, encoding="utf-8"
             )
