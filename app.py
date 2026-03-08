@@ -360,20 +360,32 @@ def render_sidebar() -> str:
 
         # ── 🔧 Credential diagnostics (remove once auth works) ─────────
         with st.expander("🔧 Auth diagnostics", expanded=False):
+            # 1 — What does st.secrets actually contain?
+            st.markdown("**st.secrets inspection:**")
+            try:
+                top_keys = list(st.secrets.keys())
+                st.caption(f"Top-level keys: {top_keys}")
+                if "gsc_credentials" in st.secrets:
+                    sub_keys = list(st.secrets["gsc_credentials"].keys())
+                    st.caption(f"gsc_credentials sub-keys: {sub_keys}")
+                else:
+                    st.error("'gsc_credentials' NOT found in secrets!")
+            except Exception as exc:
+                st.error(f"Cannot read st.secrets: {exc}")
+
+            st.divider()
+
+            # 2 — Was CREDENTIALS_DICT populated by config.py?
+            st.markdown("**config.py result:**")
             if CREDENTIALS_DICT is not None:
-                st.success("✅ CREDENTIALS_DICT loaded from secrets")
-                keys = list(CREDENTIALS_DICT.keys())
-                st.caption(f"Keys: {keys}")
+                st.success("✅ CREDENTIALS_DICT loaded")
                 pk = CREDENTIALS_DICT.get("private_key", "")
-                st.caption(f"private_key starts: {repr(pk[:60])}")
-                st.caption(f"private_key ends:   {repr(pk[-60:])}")
-                has_real_newlines = "\n" in pk
-                st.caption(f"Real newlines in key: {has_real_newlines}")
+                st.caption(f"Has real newlines: {chr(10) in pk}")
+                st.caption(f"Key starts: {repr(pk[:40])}")
             else:
-                st.error("❌ CREDENTIALS_DICT is None — falling back to file")
-                st.caption(f"Looking for file: {CREDENTIALS_FILE}")
+                st.error("❌ CREDENTIALS_DICT is None")
                 import os
-                st.caption(f"File exists: {os.path.exists(CREDENTIALS_FILE)}")
+                st.caption(f"Fallback file exists: {os.path.exists(CREDENTIALS_FILE)}")
 
     # Strip emoji prefix before returning clean page name
     return page.split("  ")[-1]
