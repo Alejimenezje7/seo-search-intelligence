@@ -24,28 +24,30 @@ CREDENTIALS_FILE: str = os.getenv("GSC_CREDENTIALS_FILE", "credentials.json")
 CREDENTIALS_DICT: dict | None = None   # populated below when running on Streamlit Cloud
 
 try:
+    import base64 as _b64
     import json as _json
     import streamlit as st  # only importable when the Streamlit runtime is active
 
     if hasattr(st, "secrets") and "gsc_credentials" in st.secrets:
         sec = st.secrets["gsc_credentials"]
 
-        if "json" in sec:
-            # ── Recommended format ──────────────────────────────────────────
-            # The entire credentials.json is stored as a single string under
-            # the key "json".  json.loads() handles \n in the private_key
-            # correctly regardless of how TOML stored the string.
-            CREDENTIALS_DICT = _json.loads(sec["json"])
+        if "json_b64" in sec:
+            # ── Best format: base64-encoded JSON (no TOML escaping issues) ──
+            # Generate with: python generate_secret.py
+            raw_bytes = _b64.b64decode(str(sec["json_b64"]).strip())
+            CREDENTIALS_DICT = _json.loads(raw_bytes)
+
+        elif "json" in sec:
+            # ── Fallback: raw JSON string ────────────────────────────────────
+            CREDENTIALS_DICT = _json.loads(str(sec["json"]))
+
         else:
             # ── Legacy field-by-field format ────────────────────────────────
             _creds = dict(sec)
             if "private_key" in _creds:
-                # Try both: real newlines already present, or literal \n chars
-                _creds["private_key"] = (
-                    _creds["private_key"]
-                    .replace("\\n", "\n")
-                )
+                _creds["private_key"] = _creds["private_key"].replace("\\n", "\n")
             CREDENTIALS_DICT = _creds
+
 except Exception:
     pass  # Not running inside Streamlit, or secret is missing — use file path instead
 

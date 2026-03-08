@@ -360,42 +360,39 @@ def render_sidebar() -> str:
 
         # ── 🔧 Credential diagnostics (remove once auth works) ─────────
         with st.expander("🔧 Auth diagnostics", expanded=False):
-            import json as _dbg_json, os
+            import json as _dbg_json, base64 as _dbg_b64, os
 
-            # 1 — Raw secret value inspection
-            st.markdown("**1 · Raw secret value:**")
-            try:
-                raw_val = st.secrets["gsc_credentials"]["json"]
-                raw_str = str(raw_val)
-                st.caption(f"Type: {type(raw_val).__name__}, Len: {len(raw_str)}")
-                st.caption(f"First 80 chars: {repr(raw_str[:80])}")
-                st.caption(f"Last  40 chars: {repr(raw_str[-40:])}")
-            except Exception as exc:
-                st.error(f"Cannot read raw value: {exc}")
-                raw_str = None
+            sec = st.secrets.get("gsc_credentials", {})
+            sub_keys = list(sec.keys()) if sec else []
+            st.caption(f"gsc_credentials sub-keys: {sub_keys}")
 
-            st.divider()
-
-            # 2 — json.loads() test
-            st.markdown("**2 · json.loads() test:**")
-            if raw_str:
+            if "json_b64" in sec:
+                st.success("✅ json_b64 key found (base64 format)")
                 try:
-                    parsed = _dbg_json.loads(raw_str)
-                    st.success(f"✅ json.loads() OK — keys: {list(parsed.keys())}")
+                    decoded = _dbg_b64.b64decode(str(sec["json_b64"]).strip())
+                    parsed  = _dbg_json.loads(decoded)
                     pk = parsed.get("private_key", "")
+                    st.success(f"✅ Decoded OK — keys: {list(parsed.keys())}")
                     st.caption(f"private_key has real newlines: {chr(10) in pk}")
-                    st.caption(f"private_key[:60]: {repr(pk[:60])}")
+                except Exception as exc:
+                    st.error(f"❌ Decode failed: {exc}")
+
+            elif "json" in sec:
+                st.warning("⚠️ json key found (raw JSON format) — prefer json_b64")
+                try:
+                    parsed = _dbg_json.loads(str(sec["json"]))
+                    st.success(f"✅ json.loads() OK — keys: {list(parsed.keys())}")
                 except Exception as exc:
                     st.error(f"❌ json.loads() FAILED: {exc}")
+            else:
+                st.error("❌ Neither json_b64 nor json key found in secrets")
 
             st.divider()
-
-            # 3 — config.py result
-            st.markdown("**3 · config.py CREDENTIALS_DICT:**")
+            st.markdown("**config.py CREDENTIALS_DICT:**")
             if CREDENTIALS_DICT is not None:
-                st.success("✅ Loaded")
+                st.success("✅ Loaded successfully")
             else:
-                st.error("❌ None — json.loads() failed at import time")
+                st.error("❌ None — check secret format above")
                 st.caption(f"Fallback file exists: {os.path.exists(CREDENTIALS_FILE)}")
 
     # Strip emoji prefix before returning clean page name
