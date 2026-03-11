@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
 
 from config import APP_ICON, APP_TITLE, CREDENTIALS_DICT, CREDENTIALS_FILE
 from src import cache
-from views import activation, buying, explorer, mtd, overview, weekly
+from views import explorer, mtd, overview, weekly
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -325,14 +325,7 @@ def render_sidebar() -> str:
         # ── Navigation ─────────────────────────────────────────────────
         page = st.radio(
             "Navigate",
-            options=[
-                "📊  Overview",
-                "📈  Week-over-Week",
-                "📅  Month-to-Date",
-                "🛒  Buying & Trading",
-                "🎯  Digital Activation",
-                "🔍  Keyword Explorer",
-            ],
+            options=["📊  Overview", "📈  Week-over-Week", "📅  Month-to-Date", "🔍  Keyword Explorer"],
             label_visibility="collapsed",
         )
 
@@ -423,10 +416,6 @@ def main():
         weekly.render(df)
     elif page == "Month-to-Date":
         mtd.render(df)
-    elif page == "Buying & Trading":
-        buying.render(df)
-    elif page == "Digital Activation":
-        activation.render(df)
     elif page == "Keyword Explorer":
         explorer.render(df)
 
