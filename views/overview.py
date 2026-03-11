@@ -31,7 +31,7 @@ from src.processor import (
     top_gainers,
     top_decliners,
 )
-from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_XLIGHT, build_display_table
+from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_XLIGHT, build_display_table, style_pct_cols
 
 
 # ── KPI strip ──────────────────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ def _country_performance(df: pd.DataFrame) -> None:
         "impressions_curr":  "Impressions",
         "impressions_delta": "Impr Δ",
     })
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(style_pct_cols(display), use_container_width=True, hide_index=True)
 
     # Bar chart — click delta by market
     chart_df = country_wow.copy()

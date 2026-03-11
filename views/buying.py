@@ -28,6 +28,7 @@ from src.processor import (
 from src.utils import (
     apply_bw,
     build_display_table,
+    style_pct_cols,
     C_BLACK, C_MID,
     fmt_delta, fmt_pct,
 )
@@ -147,7 +148,7 @@ def _ones_to_watch(df: pd.DataFrame, top_n: int) -> None:
         "impressions_delta": "Change",
         "impressions_pct":   "% Growth",
     })
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(style_pct_cols(display), use_container_width=True, hide_index=True)
 
 
 # ── Cooling demand ──────────────────────────────────────────────────────────────
@@ -190,7 +191,7 @@ def _cooling_demand(df: pd.DataFrame, top_n: int) -> None:
         "impressions_delta": "Change",
         "impressions_pct":   "% Change",
     })
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(style_pct_cols(display), use_container_width=True, hide_index=True)
 
 
 # ── Category deep-dive tabs ────────────────────────────────────────────────────

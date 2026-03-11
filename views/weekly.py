@@ -37,6 +37,7 @@ from src.processor import (
 from src.utils import (
     apply_bw,
     build_display_table,
+    style_pct_cols,
     C_BLACK,
     C_MID,
     C_LIGHT,
@@ -145,7 +146,7 @@ def _country_section(df: pd.DataFrame, metric: str) -> None:
         f"{metric}_delta":   "Change",
         f"{metric}_pct":     "% Chg",
     })
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(style_pct_cols(display), use_container_width=True, hide_index=True)
 
     # Horizontal bar chart
     chart_df = country_wow.copy()

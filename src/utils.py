@@ -83,17 +83,62 @@ def fmt_pos(val) -> str:
     return "—"
 
 
+# ── Traffic-light colour for % change columns ──────────────────────────────────
+# Columns (by display name) that contain ▲/▼-formatted values
+_PCT_COL_NAMES = {"% Chg", "% Change", "% Growth", "Change", "Pos Δ"}
+
+
+def _pct_cell_css(val: str) -> str:
+    """
+    Return a CSS style string for a single ▲/▼-formatted cell.
+    Thresholds:
+      ▲ ≥ 5 %  → green   #16a34a
+      ▲  < 5 %  → yellow  #ca8a04
+      ▼  < 5 %  → yellow  #ca8a04
+      ▼ ≥ 5 %  → red     #dc2626
+      —  / new → grey    #6b7280
+    """
+    if not isinstance(val, str):
+        return ""
+    if val.startswith("▲"):
+        try:
+            num = float(val.replace("▲", "").replace("%", "").replace(",", "").strip())
+        except ValueError:
+            num = 99.0
+        color = "#16a34a" if num >= 5.0 else "#ca8a04"
+        return f"color: {color}; font-weight: 700"
+    if val.startswith("▼"):
+        try:
+            num = float(val.replace("▼", "").replace("%", "").replace(",", "").strip())
+        except ValueError:
+            num = 99.0
+        color = "#dc2626" if num >= 5.0 else "#ca8a04"
+        return f"color: {color}; font-weight: 700"
+    return "color: #9ca3af; font-weight: 500"   # grey for — / new
+
+
+def style_pct_cols(df: pd.DataFrame):
+    """
+    Apply traffic-light colouring to any ▲/▼-formatted columns and
+    return a pandas Styler ready for st.dataframe().
+    """
+    pct_cols = [c for c in df.columns if c in _PCT_COL_NAMES]
+    styler = df.style
+    if pct_cols:
+        styler = styler.map(_pct_cell_css, subset=pct_cols)
+    return styler
+
+
 # ── Table builder ──────────────────────────────────────────────────────────────
 
 def build_display_table(
     df: pd.DataFrame,
     metric: str,
     extra_cols: list[str] | None = None,
-) -> pd.DataFrame:
+):
     """
-    Convert a processor output DataFrame into a clean display table.
-    Adds pre-formatted Trend and % Chg columns so Streamlit renders them
-    as plain text (no broken background colors).
+    Convert a processor output DataFrame into a colour-coded display table.
+    Returns a pandas Styler so ▲/▼ % columns are green/yellow/red.
     """
     cols = ["keyword", f"{metric}_prev", f"{metric}_curr", f"{metric}_delta", f"{metric}_pct"]
     if extra_cols:
@@ -116,4 +161,4 @@ def build_display_table(
         "position_delta":    "Pos Δ",
         "brand_type":        "Type",
     }
-    return out.rename(columns=rename)
+    return style_pct_cols(out.rename(columns=rename))

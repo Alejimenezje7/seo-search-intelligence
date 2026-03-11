@@ -26,6 +26,7 @@ from src.processor import (
 )
 from src.utils import (
     apply_bw,
+    style_pct_cols,
     C_BLACK, C_MID, C_XLIGHT,
     fmt_delta, fmt_pct,
 )
@@ -153,7 +154,7 @@ def _campaign_wow(campaign_df: pd.DataFrame, top_n: int) -> None:
                 "impressions_delta":  "Change",
                 "impressions_pct":    "% Change",
             })
-            st.dataframe(display, use_container_width=True, hide_index=True)
+            st.dataframe(style_pct_cols(display), use_container_width=True, hide_index=True)
 
 
 # ── Campaign category deep-dive tabs ──────────────────────────────────────────
