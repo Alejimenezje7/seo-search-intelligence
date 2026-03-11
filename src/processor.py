@@ -243,6 +243,37 @@ def daily_trend(df: pd.DataFrame, group_cols: list[str] = ["date"]) -> pd.DataFr
 
 # ── Country (domain) breakdown ─────────────────────────────────────────────────
 
+def compute_wow_by_category(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Week-over-Week aggregated at product_category level.
+    Requires 'product_category' column (from add_category_column).
+    """
+    if "product_category" not in df.columns or df.empty:
+        return pd.DataFrame()
+
+    curr_df, prev_df, *_ = get_last_two_full_weeks(df)
+
+    curr_agg = curr_df.groupby("product_category", as_index=False).agg(
+        clicks_curr=("clicks", "sum"),
+        impressions_curr=("impressions", "sum"),
+    )
+    prev_agg = prev_df.groupby("product_category", as_index=False).agg(
+        clicks_prev=("clicks", "sum"),
+        impressions_prev=("impressions", "sum"),
+    )
+
+    merged = pd.merge(curr_agg, prev_agg, on="product_category", how="outer").fillna(0)
+    merged["clicks_delta"] = merged["clicks_curr"] - merged["clicks_prev"]
+    merged["clicks_pct"] = merged.apply(
+        lambda r: _safe_pct(r["clicks_curr"], r["clicks_prev"]), axis=1
+    )
+    merged["impressions_delta"] = merged["impressions_curr"] - merged["impressions_prev"]
+    merged["impressions_pct"] = merged.apply(
+        lambda r: _safe_pct(r["impressions_curr"], r["impressions_prev"]), axis=1
+    )
+    return merged.sort_values("impressions_curr", ascending=False).reset_index(drop=True)
+
+
 def compute_wow_by_domain(df: pd.DataFrame) -> pd.DataFrame:
     """
     Week-over-Week aggregated at domain level.

@@ -117,6 +117,65 @@ def keyword_search(df: pd.DataFrame, key: str = "kw_search") -> pd.DataFrame:
     return df
 
 
+# ── Product Category Classification (Buying & Trading) ────────────────────────
+
+PRODUCT_CATEGORIES = {
+    "Running":    ["running", "run ", "correr", "marathon", "maratón", "trail run", "jogging"],
+    "Football":   ["football", "fútbol", "futbol", "soccer", "bota de", "taco ", "cleats"],
+    "Training":   ["training", "gym", "fitness", "workout", "entrenamiento", "cross training"],
+    "Originals":  ["originals", "stan smith", "superstar", "campus", "nmd", "gazelle", "samba", "forum"],
+    "Basketball": ["basketball", "basquet", "nba", "court shoe"],
+    "Outdoor":    ["outdoor", "hiking", "trail", "trekking", "montaña"],
+    "Kids":       ["kids", " niño", " niña", "infantil", "junior"],
+    "Ultraboost": ["ultraboost", "ultra boost", "boost"],
+    "Swim/Beach": ["swim", "traje de baño", "natación", "swimwear", "playa"],
+    "Tennis":     ["tennis", "tenis", "padel", "pádel"],
+}
+
+
+def classify_product_category(keyword: str) -> str:
+    kw = keyword.lower()
+    for cat, terms in PRODUCT_CATEGORIES.items():
+        if any(t in kw for t in terms):
+            return cat
+    return "Other"
+
+
+def add_category_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "keyword" in df.columns and "product_category" not in df.columns:
+        df = df.copy()
+        df["product_category"] = df["keyword"].apply(classify_product_category)
+    return df
+
+
+# ── Campaign Keyword Classification (Digital Activation) ──────────────────────
+
+CAMPAIGN_CATEGORIES = {
+    "Sale / Promotions": ["sale", "outlet", "rebajas", "descuento", "oferta", "promo", "liquidación"],
+    "New Collection":    ["nueva colección", "new collection", "temporada", "nueva temporada"],
+    "Collaborations":    ["collab", "limited edition", "edición limitada", "collaboration", "special edition"],
+    "Sports Events":     ["copa del mundo", "world cup", "copa america", "euro ", "olympics", "olimpiadas", "mundial"],
+    "Sustainability":    ["sustainable", "sostenible", "recycled", "reciclado", "parley", "eco "],
+    "Back to School":    ["back to school", "vuelta al cole", "inicio de clases", "regreso a clases"],
+}
+
+
+def classify_campaign_keyword(keyword: str) -> str | None:
+    kw = keyword.lower()
+    for cat, terms in CAMPAIGN_CATEGORIES.items():
+        if any(t in kw for t in terms):
+            return cat
+    return None
+
+
+def add_campaign_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Tag keywords matching campaign categories; non-matching rows get None."""
+    if "keyword" in df.columns and "campaign_category" not in df.columns:
+        df = df.copy()
+        df["campaign_category"] = df["keyword"].apply(classify_campaign_keyword)
+    return df
+
+
 # ── Internal ───────────────────────────────────────────────────────────────────
 
 def _pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:

@@ -36,7 +36,7 @@ def _period_banner(df: pd.DataFrame) -> None:
         _, _, curr_start, curr_end, prev_start, prev_end = get_mtd_ranges(df)
         st.info(
             f"**Current MTD:** {curr_start:%b %d} – {curr_end:%b %d, %Y}  ·  "
-            f"**Previous period:** {prev_start:%b %d} – {prev_end:%b %d, %Y}"
+            f"**vs. Previous Month (same days):** {prev_start:%b %d} – {prev_end:%b %d, %Y}"
         )
     except Exception:
         st.info("Could not determine MTD ranges from the available data.")
@@ -165,6 +165,7 @@ def _export(mtd: pd.DataFrame) -> None:
 
 def render(df: pd.DataFrame) -> None:
     st.title("Month-to-Date Analysis")
+    st.caption("Compares current month (day 1 → yesterday) vs the same day-range in the previous month.")
 
     if df.empty:
         st.warning("No data loaded.")
