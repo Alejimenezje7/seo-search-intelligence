@@ -91,12 +91,16 @@ _PCT_COL_NAMES = {"% Chg", "% Change", "% Growth", "Change", "Pos Δ"}
 def _pct_cell_css(val: str) -> str:
     """
     Return a CSS style string for a single ▲/▼-formatted cell.
+    Uses BOTH color + background-color so Streamlit's Arrow renderer
+    always shows something visible (background-color is guaranteed;
+    text color is also set as a belt-and-suspenders measure).
+
     Thresholds:
-      ▲ ≥ 5 %  → green   #16a34a
-      ▲  < 5 %  → yellow  #ca8a04
-      ▼  < 5 %  → yellow  #ca8a04
-      ▼ ≥ 5 %  → red     #dc2626
-      —  / new → grey    #6b7280
+      ▲ ≥ 5 %  → green  text #16a34a  / bg #dcfce7
+      ▲  < 5 %  → yellow text #92400e  / bg #fef9c3
+      ▼  < 5 %  → yellow text #92400e  / bg #fef9c3
+      ▼ ≥ 5 %  → red    text #991b1b  / bg #fee2e2
+      —  / new → grey   text #6b7280  / bg transparent
     """
     if not isinstance(val, str):
         return ""
@@ -105,16 +109,18 @@ def _pct_cell_css(val: str) -> str:
             num = float(val.replace("▲", "").replace("%", "").replace(",", "").strip())
         except ValueError:
             num = 99.0
-        color = "#16a34a" if num >= 5.0 else "#ca8a04"
-        return f"color: {color}; font-weight: 700"
+        if num >= 5.0:
+            return "color: #16a34a; background-color: #dcfce7; font-weight: 700"
+        return "color: #92400e; background-color: #fef9c3; font-weight: 700"
     if val.startswith("▼"):
         try:
             num = float(val.replace("▼", "").replace("%", "").replace(",", "").strip())
         except ValueError:
             num = 99.0
-        color = "#dc2626" if num >= 5.0 else "#ca8a04"
-        return f"color: {color}; font-weight: 700"
-    return "color: #9ca3af; font-weight: 500"   # grey for — / new
+        if num >= 5.0:
+            return "color: #991b1b; background-color: #fee2e2; font-weight: 700"
+        return "color: #92400e; background-color: #fef9c3; font-weight: 700"
+    return "color: #6b7280; font-weight: 500"   # grey for — / new
 
 
 def style_pct_cols(df: pd.DataFrame):
