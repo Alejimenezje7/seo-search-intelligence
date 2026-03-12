@@ -145,7 +145,7 @@ def get_ai_recommendations(context: str, api_key: str) -> str:
 
     client  = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model      = "claude-3-5-haiku-20241022",
+        model      = "claude-3-haiku-20240307",
         max_tokens = 1200,
         system     = _SYSTEM_PROMPT,
         messages   = [
@@ -407,7 +407,7 @@ def get_email_summary(context: str, view_name: str, api_key: str) -> str:
 
     client  = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model      = "claude-3-5-haiku-20241022",
+        model      = "claude-3-haiku-20240307",
         max_tokens = 700,
         system     = _EMAIL_SYSTEM_PROMPT,
         messages   = [
