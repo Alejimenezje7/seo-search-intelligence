@@ -19,8 +19,19 @@ import pandas as pd
 # This handles API keys that only have access to specific model families.
 
 _CLAUDE_MODEL_CANDIDATES = [
+    # Claude 4 family (2025-2026)
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-opus-4-0",
+    "claude-sonnet-4-0",
+    "claude-haiku-4-0",
+    # Claude 3.7 family (early 2025)
+    "claude-3-7-sonnet-20250219",
+    # Claude 3.5 family (2024) — may be deprecated
     "claude-3-5-sonnet-20241022",
     "claude-3-5-haiku-20241022",
+    # Claude 3 family (2024) — legacy fallback
     "claude-3-opus-20240229",
     "claude-3-sonnet-20240229",
     "claude-3-haiku-20240307",
@@ -41,6 +52,8 @@ def _get_claude_model(client) -> str:
 
     import anthropic
 
+    last_auth_error = None
+
     for candidate in _CLAUDE_MODEL_CANDIDATES:
         try:
             client.messages.create(
@@ -50,12 +63,31 @@ def _get_claude_model(client) -> str:
             )
             _resolved_model = candidate
             return candidate
-        except (anthropic.NotFoundError, anthropic.PermissionDeniedError):
+        except anthropic.AuthenticationError as exc:
+            # API key is invalid — no point trying other models
+            raise RuntimeError(
+                f"API key inválido o expirado. Verifica que el key en Streamlit secrets "
+                f"sea correcto y esté activo en console.anthropic.com\n\nDetalle: {exc}"
+            ) from exc
+        except anthropic.PermissionDeniedError as exc:
+            # Key is valid but billing/plan issue
+            raise RuntimeError(
+                f"Tu API key no tiene acceso a la API de Mensajes. "
+                f"Verifica que tengas créditos API activos en console.anthropic.com/billing — "
+                f"los créditos de Claude.ai (web) no sirven para la API.\n\nDetalle: {exc}"
+            ) from exc
+        except anthropic.NotFoundError:
+            # Model name doesn't exist for this key — try next
+            continue
+        except Exception:
+            # Other errors (rate limit, network, etc.) — try next candidate
             continue
 
     raise RuntimeError(
-        "No Claude model is accessible with this API key. "
-        "Please verify your Anthropic plan and billing at console.anthropic.com"
+        "Ningún modelo de Claude responde con este API key. "
+        "Modelos probados: " + ", ".join(_CLAUDE_MODEL_CANDIDATES) + ". "
+        "Ve a console.anthropic.com/settings/limits para ver los modelos disponibles "
+        "en tu plan."
     )
 
 
