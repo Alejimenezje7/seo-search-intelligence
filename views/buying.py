@@ -19,6 +19,7 @@ from src.filters import (
     render_filters,
     PRODUCT_CATEGORIES,
 )
+from src.insights import build_buying_context, render_email_button
 from src.processor import (
     compute_wow,
     compute_wow_by_category,
@@ -282,3 +283,9 @@ def render(df: pd.DataFrame) -> None:
         _cooling_demand(df, top_n)
     st.divider()
     _category_detail(df, top_n)
+    st.divider()
+    render_email_button(
+        "Buying & Trading — Demand Intelligence",
+        build_buying_context(cat_wow, df),
+        key_suffix="buying",
+    )

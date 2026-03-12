@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.filters import add_brand_column, domain_label
+from src.insights import build_explorer_context, render_email_button
 from src.processor import daily_trend
 from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_LIGHT, C_XLIGHT
 
@@ -182,6 +183,12 @@ def render(df: pd.DataFrame) -> None:
         _domain_breakdown(matched)
         _position_trend(matched)
         _raw_table_and_export(matched)
+        st.divider()
+        render_email_button(
+            f"Keyword Explorer — '{search}'",
+            build_explorer_context(search, matched),
+            key_suffix="explorer",
+        )
 
     else:
         raw_input = st.text_area(

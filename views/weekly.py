@@ -27,6 +27,7 @@ from src.filters import (
     render_country_selector,
     render_brand_selector,
 )
+from src.insights import build_context_summary, render_email_button
 from src.processor import (
     compute_wow,
     compute_wow_by_domain,
@@ -292,3 +293,9 @@ def render(df: pd.DataFrame) -> None:
     _scatter(wow_all, metric)
     st.divider()
     _export(wow_all)
+    st.divider()
+    render_email_button(
+        "Week-over-Week Analysis",
+        build_context_summary(wow_all, df_raw=df),
+        key_suffix="weekly",
+    )

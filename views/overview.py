@@ -31,7 +31,7 @@ from src.processor import (
     top_gainers,
     top_decliners,
 )
-from src.insights import build_context_summary, get_ai_recommendations
+from src.insights import build_context_summary, get_ai_recommendations, render_email_button
 from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_XLIGHT, build_display_table, style_pct_cols, fmt_int
 
 
@@ -333,3 +333,9 @@ def render(df: pd.DataFrame) -> None:
     _anomaly_section(wow_flag)
     st.divider()
     _ai_insights_section(wow_flag, df)
+    st.divider()
+    render_email_button(
+        "Overview — Search Pulse",
+        build_context_summary(wow_flag, df_raw=df),
+        key_suffix="overview",
+    )

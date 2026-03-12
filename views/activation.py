@@ -19,6 +19,7 @@ from src.filters import (
     render_filters,
     CAMPAIGN_CATEGORIES,
 )
+from src.insights import build_activation_context, render_email_button
 from src.processor import (
     compute_wow,
     top_gainers,
@@ -291,3 +292,9 @@ def render(df: pd.DataFrame) -> None:
     _category_tabs(campaign_df, top_n)
     st.divider()
     _custom_search(df)
+    st.divider()
+    render_email_button(
+        "Digital Activation — Campaign Signals",
+        build_activation_context(campaign_df),
+        key_suffix="activation",
+    )

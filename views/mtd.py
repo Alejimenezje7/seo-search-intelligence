@@ -19,6 +19,7 @@ from src.filters import (
     render_country_selector,
     render_brand_selector,
 )
+from src.insights import build_mtd_context, render_email_button
 from src.processor import (
     compute_mtd,
     daily_trend,
@@ -203,3 +204,9 @@ def render(df: pd.DataFrame) -> None:
 
     st.divider()
     _export(mtd_all)
+    st.divider()
+    render_email_button(
+        "Month-to-Date Analysis",
+        build_mtd_context(mtd_all, df_raw=df),
+        key_suffix="mtd",
+    )
