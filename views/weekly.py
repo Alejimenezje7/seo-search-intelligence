@@ -43,6 +43,7 @@ from src.utils import (
     C_LIGHT,
     C_XLIGHT,
     fmt_delta,
+    fmt_int,
     fmt_pct,
 )
 
@@ -137,6 +138,8 @@ def _country_section(df: pd.DataFrame, metric: str) -> None:
         f"{metric}_prev", f"{metric}_curr",
         f"{metric}_delta", f"{metric}_pct",
     ]].copy()
+    display[f"{metric}_prev"]  = display[f"{metric}_prev"].apply(fmt_int)
+    display[f"{metric}_curr"]  = display[f"{metric}_curr"].apply(fmt_int)
     display[f"{metric}_delta"] = display[f"{metric}_delta"].apply(fmt_delta)
     display[f"{metric}_pct"]   = display[f"{metric}_pct"].apply(fmt_pct)
     display = display.rename(columns={

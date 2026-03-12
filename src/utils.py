@@ -67,6 +67,17 @@ def fmt_pct(val) -> str:
     return "— 0%"
 
 
+def fmt_int(val) -> str:
+    """
+    Format a numeric count (clicks, impressions…) as a comma-separated integer.
+    e.g.  375335.0  → "375,335"
+          None/NaN  → "—"
+    """
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return "—"
+    return f"{int(val):,}"
+
+
 def fmt_pos(val) -> str:
     """
     Format an average position delta.
@@ -153,7 +164,9 @@ def build_display_table(
 
     out = df[cols].copy()
 
-    # Replace raw delta + pct columns with formatted strings
+    # Format all numeric columns — integers with commas, no decimals
+    out[f"{metric}_prev"]  = out[f"{metric}_prev"].apply(fmt_int)
+    out[f"{metric}_curr"]  = out[f"{metric}_curr"].apply(fmt_int)
     out[f"{metric}_delta"] = out[f"{metric}_delta"].apply(fmt_delta)
     out[f"{metric}_pct"]   = out[f"{metric}_pct"].apply(fmt_pct)
 

@@ -28,7 +28,7 @@ from src.utils import (
     apply_bw,
     style_pct_cols,
     C_BLACK, C_MID, C_XLIGHT,
-    fmt_delta, fmt_pct,
+    fmt_delta, fmt_int, fmt_pct,
 )
 
 
@@ -144,6 +144,8 @@ def _campaign_wow(campaign_df: pd.DataFrame, top_n: int) -> None:
             ]
             disp_cols = [c for c in disp_cols if c in result.columns]
             display = result[disp_cols].copy()
+            display["impressions_prev"]  = display["impressions_prev"].apply(fmt_int)
+            display["impressions_curr"]  = display["impressions_curr"].apply(fmt_int)
             display["impressions_delta"] = display["impressions_delta"].apply(fmt_delta)
             display["impressions_pct"]   = display["impressions_pct"].apply(fmt_pct)
             display = display.rename(columns={

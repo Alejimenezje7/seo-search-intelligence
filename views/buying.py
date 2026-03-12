@@ -30,7 +30,7 @@ from src.utils import (
     build_display_table,
     style_pct_cols,
     C_BLACK, C_MID,
-    fmt_delta, fmt_pct,
+    fmt_delta, fmt_int, fmt_pct,
 )
 
 
@@ -138,6 +138,8 @@ def _ones_to_watch(df: pd.DataFrame, top_n: int) -> None:
     disp_cols = ["keyword"] + extra + ["impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"]
     disp_cols = [c for c in disp_cols if c in gainers.columns]
     display = gainers[disp_cols].copy()
+    display["impressions_prev"]  = display["impressions_prev"].apply(fmt_int)
+    display["impressions_curr"]  = display["impressions_curr"].apply(fmt_int)
     display["impressions_delta"] = display["impressions_delta"].apply(fmt_delta)
     display["impressions_pct"]   = display["impressions_pct"].apply(fmt_pct)
     display = display.rename(columns={
@@ -181,6 +183,8 @@ def _cooling_demand(df: pd.DataFrame, top_n: int) -> None:
     disp_cols = ["keyword"] + extra + ["impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"]
     disp_cols = [c for c in disp_cols if c in decliners.columns]
     display = decliners[disp_cols].copy()
+    display["impressions_prev"]  = display["impressions_prev"].apply(fmt_int)
+    display["impressions_curr"]  = display["impressions_curr"].apply(fmt_int)
     display["impressions_delta"] = display["impressions_delta"].apply(fmt_delta)
     display["impressions_pct"]   = display["impressions_pct"].apply(fmt_pct)
     display = display.rename(columns={

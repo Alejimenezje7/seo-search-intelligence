@@ -31,7 +31,7 @@ from src.processor import (
     top_gainers,
     top_decliners,
 )
-from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_XLIGHT, build_display_table, style_pct_cols
+from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_XLIGHT, build_display_table, style_pct_cols, fmt_int
 
 
 # ── KPI strip ──────────────────────────────────────────────────────────────────
@@ -165,6 +165,9 @@ def _country_performance(df: pd.DataFrame) -> None:
         "impressions_curr", "impressions_delta",
     ]].copy()
 
+    display["clicks_prev"]       = display["clicks_prev"].apply(fmt_int)
+    display["clicks_curr"]       = display["clicks_curr"].apply(fmt_int)
+    display["impressions_curr"]  = display["impressions_curr"].apply(fmt_int)
     display["clicks_delta"]      = display["clicks_delta"].apply(
         lambda v: f"▲ {int(v):,}" if v > 0 else f"▼ {abs(int(v)):,}"
     )

@@ -126,10 +126,10 @@ PRODUCT_CATEGORIES = {
     "Originals":  ["originals", "stan smith", "superstar", "campus", "nmd", "gazelle", "samba", "forum"],
     "Basketball": ["basketball", "basquet", "nba", "court shoe"],
     "Outdoor":    ["outdoor", "hiking", "trail", "trekking", "montaña"],
-    "Kids":       ["kids", " niño", " niña", "infantil", "junior"],
+    "Kids":       ["kids", " niño", " niña", "infantil"],
     "Ultraboost": ["ultraboost", "ultra boost", "boost"],
     "Swim/Beach": ["swim", "traje de baño", "natación", "swimwear", "playa"],
-    "Tennis":     ["tennis", "tenis", "padel", "pádel"],
+    "Tennis":     ["tennis", "padel", "pádel"],
 }
 
 
