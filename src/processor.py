@@ -303,3 +303,71 @@ def compute_wow_by_domain(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return merged.sort_values("clicks_curr", ascending=False).reset_index(drop=True)
+
+
+# ── Month-over-Month ───────────────────────────────────────────────────────────
+
+def get_last_two_full_months(df: pd.DataFrame) -> tuple:
+    """
+    Slice the DataFrame into the last two complete calendar months.
+    e.g. today = Mar 12 → curr = Feb 1–28, prev = Jan 1–31.
+    Returns (curr_df, prev_df, curr_start, curr_end, prev_start, prev_end).
+    """
+    today      = date.today()
+    curr_end   = today.replace(day=1) - timedelta(days=1)   # last day of prev month
+    curr_start = curr_end.replace(day=1)                    # first day of prev month
+    prev_end   = curr_start - timedelta(days=1)             # last day of month before that
+    prev_start = prev_end.replace(day=1)
+
+    curr = df[(df["date"].dt.date >= curr_start) & (df["date"].dt.date <= curr_end)].copy()
+    prev = df[(df["date"].dt.date >= prev_start) & (df["date"].dt.date <= prev_end)].copy()
+    return curr, prev, curr_start, curr_end, prev_start, prev_end
+
+
+def compute_mom(
+    df: pd.DataFrame,
+    group_cols: list[str] = ["keyword"],
+    min_clicks: int = MIN_CLICKS_THRESHOLD,
+    min_impressions: int = MIN_IMPRESSIONS_THRESHOLD,
+) -> pd.DataFrame:
+    """
+    Month-over-Month comparison (last complete month vs the one before).
+    Same output structure as compute_wow.
+    """
+    curr_df, prev_df, *_ = get_last_two_full_months(df)
+    curr_agg = _aggregate(curr_df, group_cols)
+    prev_agg = _aggregate(prev_df, group_cols)
+    merged = _merge_periods(curr_agg, prev_agg, group_cols)
+    merged = _apply_thresholds(merged, min_clicks, min_impressions)
+    return merged.sort_values("clicks_curr", ascending=False).reset_index(drop=True)
+
+
+def compute_mom_by_category(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Month-over-Month aggregated at product_category level.
+    Same output structure as compute_wow_by_category.
+    """
+    if "product_category" not in df.columns or df.empty:
+        return pd.DataFrame()
+
+    curr_df, prev_df, *_ = get_last_two_full_months(df)
+
+    curr_agg = curr_df.groupby("product_category", as_index=False).agg(
+        clicks_curr=("clicks", "sum"),
+        impressions_curr=("impressions", "sum"),
+    )
+    prev_agg = prev_df.groupby("product_category", as_index=False).agg(
+        clicks_prev=("clicks", "sum"),
+        impressions_prev=("impressions", "sum"),
+    )
+
+    merged = pd.merge(curr_agg, prev_agg, on="product_category", how="outer").fillna(0)
+    merged["clicks_delta"]      = merged["clicks_curr"] - merged["clicks_prev"]
+    merged["clicks_pct"]        = merged.apply(
+        lambda r: _safe_pct(r["clicks_curr"], r["clicks_prev"]), axis=1
+    )
+    merged["impressions_delta"] = merged["impressions_curr"] - merged["impressions_prev"]
+    merged["impressions_pct"]   = merged.apply(
+        lambda r: _safe_pct(r["impressions_curr"], r["impressions_prev"]), axis=1
+    )
+    return merged.sort_values("impressions_curr", ascending=False).reset_index(drop=True)

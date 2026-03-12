@@ -6,6 +6,10 @@ Buying & Trading — Demand Intelligence view.
 Surfaces rising and falling product demand from organic search signals,
 helping the buying team spot which categories and products are gaining
 or losing consumer interest.
+
+Supports two comparison modes selectable in the UI:
+  - WoW  : last full ISO week vs the week before
+  - MoM  : last complete calendar month vs the month before
 """
 
 import pandas as pd
@@ -22,7 +26,11 @@ from src.filters import (
 from src.insights import build_buying_context, get_buying_insights, render_email_button
 from src.processor import (
     compute_wow,
+    compute_mom,
     compute_wow_by_category,
+    compute_mom_by_category,
+    get_last_two_full_weeks,
+    get_last_two_full_months,
     top_gainers,
     top_decliners,
 )
@@ -37,15 +45,15 @@ from src.utils import (
 
 # ── KPI strip ──────────────────────────────────────────────────────────────────
 
-def _kpi_strip(df: pd.DataFrame, cat_wow: pd.DataFrame) -> None:
+def _kpi_strip(df: pd.DataFrame, cat_data: pd.DataFrame, period_label: str) -> None:
     total_impr = int(df["impressions"].sum()) if not df.empty else 0
 
     top_rising = top_falling = "—"
     ones_to_watch = 0
 
-    if not cat_wow.empty:
-        rising  = cat_wow[cat_wow["impressions_pct"].notna() & (cat_wow["impressions_pct"] > 0)]
-        falling = cat_wow[cat_wow["impressions_pct"].notna() & (cat_wow["impressions_pct"] < 0)]
+    if not cat_data.empty:
+        rising  = cat_data[cat_data["impressions_pct"].notna() & (cat_data["impressions_pct"] > 0)]
+        falling = cat_data[cat_data["impressions_pct"].notna() & (cat_data["impressions_pct"] < 0)]
         if not rising.empty:
             top_rising  = rising.nlargest(1, "impressions_pct")["product_category"].iloc[0]
         if not falling.empty:
@@ -61,23 +69,26 @@ def _kpi_strip(df: pd.DataFrame, cat_wow: pd.DataFrame) -> None:
         pass
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Search Demand",    f"{total_impr:,}", help="Total impressions in loaded data")
-    c2.metric("Top Rising Category",    top_rising,        help="Category with highest WoW impression growth")
-    c3.metric("Top Declining Category", top_falling,       help="Category with highest WoW impression drop")
-    c4.metric("Ones to Watch",          f"{ones_to_watch}", help="Non-brand keywords with >20% impression growth WoW")
+    c1.metric("Total Search Demand",    f"{total_impr:,}",   help="Total impressions in loaded data")
+    c2.metric(f"Top Rising ({period_label})",   top_rising,  help="Category with highest impression growth")
+    c3.metric(f"Top Declining ({period_label})", top_falling, help="Category with highest impression drop")
+    c4.metric("Ones to Watch (WoW)",    f"{ones_to_watch}",  help="Non-brand keywords with >20% impression growth WoW")
 
 
 # ── Category demand chart ───────────────────────────────────────────────────────
 
-def _category_chart(cat_wow: pd.DataFrame) -> None:
-    st.subheader("Demand by Category — Week-over-Week")
-    st.caption("Search impression change per product category. Positive bars = growing consumer interest.")
+def _category_chart(cat_data: pd.DataFrame, period_label: str) -> None:
+    st.subheader(f"Demand by Category — {period_label}")
+    st.caption(
+        f"Search impression change per product category ({period_label}). "
+        "Positive bars = growing consumer interest."
+    )
 
-    if cat_wow.empty:
+    if cat_data.empty:
         st.info("Not enough data for category comparison.")
         return
 
-    chart = cat_wow[cat_wow["product_category"] != "Other"].copy()
+    chart = cat_data[cat_data["product_category"] != "Other"].copy()
     chart = chart.sort_values("impressions_delta")
     chart["color"] = chart["impressions_delta"].apply(lambda v: C_BLACK if v >= 0 else C_MID)
     chart["label"] = chart["impressions_delta"].apply(
@@ -93,7 +104,7 @@ def _category_chart(cat_wow: pd.DataFrame) -> None:
         textposition="outside",
     ))
     fig.update_layout(
-        xaxis_title="Impressions Delta (Current Week vs Previous Week)",
+        xaxis_title=f"Impressions Delta ({period_label})",
         yaxis_title="",
         xaxis=dict(zeroline=True, zerolinecolor=C_MID, zerolinewidth=1),
     )
@@ -103,10 +114,15 @@ def _category_chart(cat_wow: pd.DataFrame) -> None:
 
 # ── Ones to Watch ───────────────────────────────────────────────────────────────
 
-def _ones_to_watch(df: pd.DataFrame, top_n: int) -> None:
-    st.subheader("Ones to Watch — Rising Search Demand")
+def _ones_to_watch(
+    df: pd.DataFrame,
+    top_n: int,
+    period_label: str,
+    compute_fn,
+) -> None:
+    st.subheader(f"Ones to Watch — Rising Search Demand ({period_label})")
     st.caption(
-        "Non-brand keywords with the strongest week-over-week impression growth. "
+        "Non-brand keywords with the strongest impression growth. "
         "High growth = increasing consumer interest — a leading signal for buying decisions."
     )
 
@@ -116,9 +132,9 @@ def _ones_to_watch(df: pd.DataFrame, top_n: int) -> None:
         return
 
     try:
-        wow = compute_wow(nb, min_clicks=5, min_impressions=20)
+        wow = compute_fn(nb, min_clicks=5, min_impressions=20)
     except Exception as exc:
-        st.error(f"Could not compute WoW: {exc}")
+        st.error(f"Could not compute comparison: {exc}")
         return
 
     if wow.empty:
@@ -146,8 +162,8 @@ def _ones_to_watch(df: pd.DataFrame, top_n: int) -> None:
     display = display.rename(columns={
         "keyword":           "Keyword",
         "product_category":  "Category",
-        "impressions_prev":  "Prev Week",
-        "impressions_curr":  "This Week",
+        "impressions_prev":  "Prev Period",
+        "impressions_curr":  "This Period",
         "impressions_delta": "Change",
         "impressions_pct":   "% Growth",
     })
@@ -156,15 +172,20 @@ def _ones_to_watch(df: pd.DataFrame, top_n: int) -> None:
 
 # ── Cooling demand ──────────────────────────────────────────────────────────────
 
-def _cooling_demand(df: pd.DataFrame, top_n: int) -> None:
-    st.caption("Non-brand keywords losing search traction — review inventory exposure.")
+def _cooling_demand(
+    df: pd.DataFrame,
+    top_n: int,
+    period_label: str,
+    compute_fn,
+) -> None:
+    st.caption(f"Non-brand keywords losing search traction ({period_label}) — review inventory exposure.")
 
     nb = df[df["brand_type"] == "Non-Brand"]
     if nb.empty:
         return
 
     try:
-        wow = compute_wow(nb, min_clicks=5, min_impressions=20)
+        wow = compute_fn(nb, min_clicks=5, min_impressions=20)
     except Exception:
         return
 
@@ -191,8 +212,8 @@ def _cooling_demand(df: pd.DataFrame, top_n: int) -> None:
     display = display.rename(columns={
         "keyword":           "Keyword",
         "product_category":  "Category",
-        "impressions_prev":  "Prev Week",
-        "impressions_curr":  "This Week",
+        "impressions_prev":  "Prev Period",
+        "impressions_curr":  "This Period",
         "impressions_delta": "Change",
         "impressions_pct":   "% Change",
     })
@@ -201,8 +222,13 @@ def _cooling_demand(df: pd.DataFrame, top_n: int) -> None:
 
 # ── Category deep-dive tabs ────────────────────────────────────────────────────
 
-def _category_detail(df: pd.DataFrame, top_n: int) -> None:
-    st.subheader("Category Deep Dive")
+def _category_detail(
+    df: pd.DataFrame,
+    top_n: int,
+    period_label: str,
+    compute_fn,
+) -> None:
+    st.subheader(f"Category Deep Dive — {period_label}")
     st.caption("Top growing and declining keywords within each product category.")
 
     if "product_category" not in df.columns:
@@ -221,12 +247,12 @@ def _category_detail(df: pd.DataFrame, top_n: int) -> None:
                 st.info(f"No data for {cat}.")
                 continue
             try:
-                wow = compute_wow(subset, min_clicks=2, min_impressions=10)
+                wow = compute_fn(subset, min_clicks=2, min_impressions=10)
             except Exception as exc:
-                st.error(f"Could not compute WoW: {exc}")
+                st.error(f"Could not compute comparison: {exc}")
                 continue
             if wow.empty:
-                st.info("Not enough history for WoW comparison.")
+                st.info("Not enough history for comparison.")
                 continue
 
             col_g, col_d = st.columns(2)
@@ -248,7 +274,7 @@ def _category_detail(df: pd.DataFrame, top_n: int) -> None:
 
 # ── AI Buying Analyst panel ────────────────────────────────────────────────────
 
-def _buying_ai_section(cat_wow: pd.DataFrame, df: pd.DataFrame) -> None:
+def _buying_ai_section(cat_wow: pd.DataFrame, df: pd.DataFrame, period_label: str) -> None:
     """Render the AI-powered buying recommendations panel using the Claude API."""
     from config import ANTHROPIC_API_KEY
 
@@ -271,9 +297,9 @@ def _buying_ai_section(cat_wow: pd.DataFrame, df: pd.DataFrame) -> None:
     cache_key     = "buy_ai_insights_text"
     data_hash_key = "buy_ai_insights_hash"
     data_hash = (
-        f"{len(df)}-{int(df['impressions'].sum())}"
+        f"{period_label}-{len(df)}-{int(df['impressions'].sum())}"
         if not df.empty and "impressions" in df.columns
-        else "empty"
+        else f"{period_label}-empty"
     )
     if st.session_state.get(data_hash_key) != data_hash:
         st.session_state.pop(cache_key, None)
@@ -293,7 +319,7 @@ def _buying_ai_section(cat_wow: pd.DataFrame, df: pd.DataFrame) -> None:
     if generate:
         with st.spinner("🛒 Analizando señales de demanda por categoría..."):
             try:
-                context = build_buying_context(cat_wow, df)
+                context = build_buying_context(cat_wow, df, period=period_label)
                 result  = get_buying_insights(context, ANTHROPIC_API_KEY)
                 st.session_state[cache_key] = result
             except Exception as exc:
@@ -321,32 +347,73 @@ def render(df: pd.DataFrame) -> None:
     df = add_brand_column(df)
     df = add_category_column(df)
 
+    # ── Filters + period mode selector ───────────────────────────────────────
     with st.container(border=True):
-        df = render_country_selector(df, key="buy_country")
+        col_country, col_mode = st.columns([2, 1])
+        with col_country:
+            df = render_country_selector(df, key="buy_country")
+        with col_mode:
+            mode = st.radio(
+                "Período de análisis:",
+                ["📅 WoW — semana vs semana", "📆 MoM — mes vs mes"],
+                horizontal=False,
+                key="buy_period_mode",
+                help=(
+                    "WoW: última semana completa vs la semana anterior\n"
+                    "MoM: último mes completo vs el mes anterior"
+                ),
+            )
+
+    is_mom       = mode.startswith("📆")
+    period_label = "MoM" if is_mom else "WoW"
+    compute_fn   = compute_mom           if is_mom else compute_wow
+    cat_fn       = compute_mom_by_category if is_mom else compute_wow_by_category
+
+    # ── Period info banner ────────────────────────────────────────────────────
+    try:
+        if is_mom:
+            _, _, cs, ce, ps, pe = get_last_two_full_months(df)
+            st.info(
+                f"📆 **Month-over-Month** — "
+                f"Comparando **{cs.strftime('%B %Y')}** ({cs} → {ce}) "
+                f"vs **{ps.strftime('%B %Y')}** ({ps} → {pe})"
+            )
+        else:
+            _, _, cs, ce, ps, pe = get_last_two_full_weeks(df)
+            st.info(
+                f"📅 **Week-over-Week** — "
+                f"Comparando semana **{cs} → {ce}** "
+                f"vs semana **{ps} → {pe}**"
+            )
+    except Exception:
+        pass
 
     _, top_n = render_filters(df, prefix="buy")
 
     try:
         nb_df   = df[df["brand_type"] == "Non-Brand"]
-        cat_wow = compute_wow_by_category(nb_df)
+        cat_data = cat_fn(nb_df)
     except Exception:
-        cat_wow = pd.DataFrame()
+        cat_data = pd.DataFrame()
 
-    _kpi_strip(df, cat_wow)
+    _kpi_strip(df, cat_data, period_label)
     st.divider()
-    _category_chart(cat_wow)
+    _category_chart(cat_data, period_label=f"{'Month-over-Month' if is_mom else 'Week-over-Week'}")
     st.divider()
-    _ones_to_watch(df, top_n)
+    _ones_to_watch(df, top_n, period_label=period_label, compute_fn=compute_fn)
     st.divider()
-    with st.expander("▼ Cooling Demand — keywords losing search traction", expanded=False):
-        _cooling_demand(df, top_n)
+    with st.expander(
+        f"▼ Cooling Demand — keywords losing search traction ({period_label})",
+        expanded=False,
+    ):
+        _cooling_demand(df, top_n, period_label=period_label, compute_fn=compute_fn)
     st.divider()
-    _category_detail(df, top_n)
+    _category_detail(df, top_n, period_label=period_label, compute_fn=compute_fn)
     st.divider()
-    _buying_ai_section(cat_wow, df)
+    _buying_ai_section(cat_data, df, period_label=period_label)
     st.divider()
     render_email_button(
-        "Buying & Trading — Demand Intelligence",
-        build_buying_context(cat_wow, df),
+        f"Buying & Trading — Demand Intelligence ({period_label})",
+        build_buying_context(cat_data, df, period=period_label),
         key_suffix="buying",
     )

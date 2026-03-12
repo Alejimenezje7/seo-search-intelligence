@@ -350,10 +350,12 @@ def build_buying_context(
     cat_wow: pd.DataFrame,
     df: pd.DataFrame,
     top_n: int = 6,
+    period: str = "WoW",
 ) -> str:
     """Build a structured context string for the Buying & Trading view."""
     lines: list[str] = []
-    lines.append("=== BUYING & TRADING — DEMAND INTELLIGENCE ===")
+    period_full = "Month-over-Month (último mes completo vs anterior)" if period == "MoM" else "Week-over-Week (última semana vs anterior)"
+    lines.append(f"=== BUYING & TRADING — DEMAND INTELLIGENCE | Período: {period_full} ===")
 
     total_impr = int(df["impressions"].sum()) if not df.empty else 0
     lines.append(f"• Impresiones totales (período): {total_impr:,}")
