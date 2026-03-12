@@ -14,6 +14,51 @@ from __future__ import annotations
 import pandas as pd
 
 
+# ── Model auto-detection ───────────────────────────────────────────────────────
+# Tries candidates in order and caches the first that responds successfully.
+# This handles API keys that only have access to specific model families.
+
+_CLAUDE_MODEL_CANDIDATES = [
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku-20241022",
+    "claude-3-opus-20240229",
+    "claude-3-sonnet-20240229",
+    "claude-3-haiku-20240307",
+]
+
+_resolved_model: str | None = None   # module-level cache
+
+
+def _get_claude_model(client) -> str:
+    """
+    Return the first Claude model that this API key can actually call.
+    Result is cached in a module-level variable so the probe only fires once
+    per Streamlit worker process.
+    """
+    global _resolved_model
+    if _resolved_model:
+        return _resolved_model
+
+    import anthropic
+
+    for candidate in _CLAUDE_MODEL_CANDIDATES:
+        try:
+            client.messages.create(
+                model=candidate,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            _resolved_model = candidate
+            return candidate
+        except (anthropic.NotFoundError, anthropic.PermissionDeniedError):
+            continue
+
+    raise RuntimeError(
+        "No Claude model is accessible with this API key. "
+        "Please verify your Anthropic plan and billing at console.anthropic.com"
+    )
+
+
 # ── Data context builder ───────────────────────────────────────────────────────
 
 def _fmt_row(row: pd.Series, metric: str) -> str:
@@ -144,8 +189,9 @@ def get_ai_recommendations(context: str, api_key: str) -> str:
     import anthropic
 
     client  = anthropic.Anthropic(api_key=api_key)
+    model   = _get_claude_model(client)
     message = client.messages.create(
-        model      = "claude-3-haiku-20240307",
+        model      = model,
         max_tokens = 1200,
         system     = _SYSTEM_PROMPT,
         messages   = [
@@ -406,8 +452,9 @@ def get_email_summary(context: str, view_name: str, api_key: str) -> str:
     import anthropic
 
     client  = anthropic.Anthropic(api_key=api_key)
+    model   = _get_claude_model(client)
     message = client.messages.create(
-        model      = "claude-3-haiku-20240307",
+        model      = model,
         max_tokens = 700,
         system     = _EMAIL_SYSTEM_PROMPT,
         messages   = [
