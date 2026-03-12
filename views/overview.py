@@ -31,6 +31,7 @@ from src.processor import (
     top_gainers,
     top_decliners,
 )
+from src.insights import build_context_summary, get_ai_recommendations
 from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_XLIGHT, build_display_table, style_pct_cols, fmt_int
 
 
@@ -232,6 +233,69 @@ def _anomaly_section(wow_flagged: pd.DataFrame) -> None:
             col3.write(f"**Reason:** {row['anomaly_reason']}")
 
 
+# ── AI Analyst panel ───────────────────────────────────────────────────────────
+
+def _ai_insights_section(wow_flagged: pd.DataFrame, df: pd.DataFrame) -> None:
+    """Render the AI-powered recommendations panel using the Claude API."""
+    from config import ANTHROPIC_API_KEY
+
+    st.subheader("🤖 AI Analyst — Recomendaciones Inteligentes")
+    st.caption(
+        "El agente analiza los datos de esta semana y genera recomendaciones "
+        "estratégicas para tus equipos de marketing, buying y activación. "
+        "Powered by Claude (Anthropic)."
+    )
+
+    # ── API key not configured ───────────────────────────────────────────────
+    if not ANTHROPIC_API_KEY:
+        st.info(
+            "**Para activar AI Analyst**, añade tu API key de Anthropic a los "
+            "secrets de Streamlit Cloud:\n\n"
+            "```toml\n[ai]\nanthropic_api_key = \"sk-ant-...\"\n```\n\n"
+            "Puedes generar una key en [console.anthropic.com](https://console.anthropic.com)."
+        )
+        return
+
+    # ── Cache key changes when data changes (auto-invalidate on refresh) ─────
+    cache_key      = "ov_ai_insights_text"
+    data_hash_key  = "ov_ai_insights_hash"
+    data_hash = (
+        f"{len(wow_flagged)}-{int(wow_flagged['clicks_curr'].sum())}"
+        if not wow_flagged.empty and "clicks_curr" in wow_flagged.columns
+        else "empty"
+    )
+    if st.session_state.get(data_hash_key) != data_hash:
+        st.session_state.pop(cache_key, None)
+        st.session_state[data_hash_key] = data_hash
+
+    # ── Generate button ──────────────────────────────────────────────────────
+    col_btn, col_note = st.columns([1, 4])
+    with col_btn:
+        generate = st.button(
+            "⚡ Generar Insights",
+            key="ov_gen_ai_insights",
+            type="primary",
+        )
+    with col_note:
+        if cache_key in st.session_state:
+            st.caption("✅ Insight generado — clic nuevamente para refrescar.")
+
+    if generate:
+        with st.spinner("🧠 Analizando datos de búsqueda orgánica..."):
+            try:
+                context = build_context_summary(wow_flagged, df_raw=df)
+                result  = get_ai_recommendations(context, ANTHROPIC_API_KEY)
+                st.session_state[cache_key] = result
+            except Exception as exc:
+                st.error(f"Error al conectar con la API de Claude: {exc}")
+                return
+
+    # ── Display cached result ─────────────────────────────────────────────────
+    if cache_key in st.session_state:
+        with st.container(border=True):
+            st.markdown(st.session_state[cache_key])
+
+
 # ── Main render ────────────────────────────────────────────────────────────────
 
 def render(df: pd.DataFrame) -> None:
@@ -267,3 +331,5 @@ def render(df: pd.DataFrame) -> None:
     _country_performance(df)
     st.divider()
     _anomaly_section(wow_flag)
+    st.divider()
+    _ai_insights_section(wow_flag, df)

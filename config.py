@@ -53,6 +53,22 @@ except Exception:
 
 OAUTH_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 
+# ── AI Insights (Anthropic Claude API) ────────────────────────────────────────
+# Priority: Streamlit Cloud secrets [ai] section > ANTHROPIC_API_KEY env var.
+# To enable on Streamlit Cloud add to secrets:
+#   [ai]
+#   anthropic_api_key = "sk-ant-..."
+ANTHROPIC_API_KEY: str | None = os.getenv("ANTHROPIC_API_KEY")
+
+try:
+    import streamlit as _st_ai
+    if hasattr(_st_ai, "secrets") and "ai" in _st_ai.secrets:
+        _key = str(_st_ai.secrets["ai"].get("anthropic_api_key", "")).strip()
+        if _key:
+            ANTHROPIC_API_KEY = _key
+except Exception:
+    pass  # Not running in Streamlit, or secret absent — env var fallback used
+
 # ── Domains ────────────────────────────────────────────────────────────────────
 # Add or remove domains here as your portfolio grows.
 DOMAINS = [
