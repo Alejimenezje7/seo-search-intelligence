@@ -32,7 +32,7 @@ from src.processor import (
     top_decliners,
 )
 from src.insights import build_context_summary, get_ai_recommendations, render_email_button
-from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_XLIGHT, build_display_table, style_pct_cols, fmt_int
+from src.utils import apply_bw, BW_PALETTE, C_BLACK, C_MID, C_XLIGHT, build_display_table, style_pct_cols, fmt_int, fmt_delta
 
 
 # ── KPI strip ──────────────────────────────────────────────────────────────────
@@ -222,15 +222,45 @@ def _anomaly_section(wow_flagged: pd.DataFrame) -> None:
     if anomalies.empty:
         return
 
-    st.subheader(f"Anomaly Alerts — {len(anomalies)} keyword(s) flagged")
+    n = len(anomalies)
+    st.subheader(f"⚠️ Anomaly Alerts — {n} keyword(s) flagged")
 
-    for _, row in anomalies.iterrows():
-        icon = "▼" if row.get("anomaly_type") == "drop" else "▲"
-        with st.expander(f"{icon} {row['keyword']}"):
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Clicks", f"{int(row['clicks_curr']):,}", f"{int(row['clicks_delta']):+,}")
-            col2.metric("Impressions", f"{int(row['impressions_curr']):,}", f"{int(row['impressions_delta']):+,}")
-            col3.write(f"**Reason:** {row['anomaly_reason']}")
+    # Build compact display table
+    cols_needed = [c for c in [
+        "keyword", "anomaly_type",
+        "clicks_curr", "clicks_delta",
+        "impressions_curr", "impressions_delta",
+        "anomaly_reason",
+    ] if c in anomalies.columns]
+
+    display = anomalies[cols_needed].copy()
+    if "anomaly_type" in display.columns:
+        display["anomaly_type"] = display["anomaly_type"].apply(
+            lambda t: "▲ Spike" if str(t).lower() == "spike" else "▼ Drop"
+        )
+    for col in ("clicks_curr", "impressions_curr"):
+        if col in display.columns:
+            display[col] = display[col].apply(fmt_int)
+    for col in ("clicks_delta", "impressions_delta"):
+        if col in display.columns:
+            display[col] = display[col].apply(fmt_delta)
+
+    display = display.rename(columns={
+        "keyword":           "Keyword",
+        "anomaly_type":      "Type",
+        "clicks_curr":       "Clicks",
+        "clicks_delta":      "Clicks Δ",
+        "impressions_curr":  "Impressions",
+        "impressions_delta": "Impr Δ",
+        "anomaly_reason":    "Reason",
+    })
+
+    TOP_VISIBLE = 5
+    st.dataframe(display.head(TOP_VISIBLE), use_container_width=True, hide_index=True)
+
+    if n > TOP_VISIBLE:
+        with st.expander(f"Ver {n - TOP_VISIBLE} anomalías más"):
+            st.dataframe(display.iloc[TOP_VISIBLE:], use_container_width=True, hide_index=True)
 
 
 # ── AI Analyst panel ───────────────────────────────────────────────────────────

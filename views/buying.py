@@ -19,7 +19,7 @@ from src.filters import (
     render_filters,
     PRODUCT_CATEGORIES,
 )
-from src.insights import build_buying_context, render_email_button
+from src.insights import build_buying_context, get_buying_insights, render_email_button
 from src.processor import (
     compute_wow,
     compute_wow_by_category,
@@ -246,6 +246,65 @@ def _category_detail(df: pd.DataFrame, top_n: int) -> None:
                     st.dataframe(build_display_table(d, "impressions"), use_container_width=True, hide_index=True)
 
 
+# ── AI Buying Analyst panel ────────────────────────────────────────────────────
+
+def _buying_ai_section(cat_wow: pd.DataFrame, df: pd.DataFrame) -> None:
+    """Render the AI-powered buying recommendations panel using the Claude API."""
+    from config import ANTHROPIC_API_KEY
+
+    st.subheader("🛒 AI Buying Analyst — Señales de Demanda")
+    st.caption(
+        "El agente analiza las señales de demanda orgánica por categoría y genera "
+        "recomendaciones de buying, inventario y trading para tu equipo comercial. "
+        "Powered by Claude (Anthropic)."
+    )
+
+    if not ANTHROPIC_API_KEY:
+        st.info(
+            "**Para activar AI Buying Analyst**, añade tu API key de Anthropic a los "
+            "secrets de Streamlit Cloud:\n\n"
+            "```toml\n[ai]\nanthropic_api_key = \"sk-ant-...\"\n```\n\n"
+            "Puedes generar una key en [console.anthropic.com](https://console.anthropic.com)."
+        )
+        return
+
+    cache_key     = "buy_ai_insights_text"
+    data_hash_key = "buy_ai_insights_hash"
+    data_hash = (
+        f"{len(df)}-{int(df['impressions'].sum())}"
+        if not df.empty and "impressions" in df.columns
+        else "empty"
+    )
+    if st.session_state.get(data_hash_key) != data_hash:
+        st.session_state.pop(cache_key, None)
+        st.session_state[data_hash_key] = data_hash
+
+    col_btn, col_note = st.columns([1, 4])
+    with col_btn:
+        generate = st.button(
+            "⚡ Generar Insights de Buying",
+            key="buy_gen_ai_insights",
+            type="primary",
+        )
+    with col_note:
+        if cache_key in st.session_state:
+            st.caption("✅ Insight generado — clic nuevamente para refrescar.")
+
+    if generate:
+        with st.spinner("🛒 Analizando señales de demanda por categoría..."):
+            try:
+                context = build_buying_context(cat_wow, df)
+                result  = get_buying_insights(context, ANTHROPIC_API_KEY)
+                st.session_state[cache_key] = result
+            except Exception as exc:
+                st.error(f"Error al conectar con la API de Claude: {exc}")
+                return
+
+    if cache_key in st.session_state:
+        with st.container(border=True):
+            st.markdown(st.session_state[cache_key])
+
+
 # ── Main render ────────────────────────────────────────────────────────────────
 
 def render(df: pd.DataFrame) -> None:
@@ -283,6 +342,8 @@ def render(df: pd.DataFrame) -> None:
         _cooling_demand(df, top_n)
     st.divider()
     _category_detail(df, top_n)
+    st.divider()
+    _buying_ai_section(cat_wow, df)
     st.divider()
     render_email_button(
         "Buying & Trading — Demand Intelligence",

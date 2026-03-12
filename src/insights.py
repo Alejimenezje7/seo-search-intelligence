@@ -200,6 +200,11 @@ Por favor, responde con exactamente este formato en markdown:
 ## 📊 Resumen Ejecutivo
 _(2-3 oraciones sobre el estado general del tráfico orgánico esta semana)_
 
+## 🌎 Performance por País
+_(Para CADA mercado que aparezca en los datos, escribe una línea con: bandera o nombre del país, \
+variación % de clicks WoW, y una observación concreta de 1 frase sobre qué impulsó ese resultado. \
+Ordena de mayor a menor crecimiento.)_
+
 ## 🚀 Oportunidades Clave
 _(3-4 bullets con oportunidades específicas basadas en keywords o mercados con crecimiento)_
 
@@ -228,6 +233,67 @@ def get_ai_recommendations(context: str, api_key: str) -> str:
         system     = _SYSTEM_PROMPT,
         messages   = [
             {"role": "user", "content": _USER_TEMPLATE.format(context=context)},
+        ],
+    )
+    return message.content[0].text
+
+
+# ── Buying & Trading AI Agent ─────────────────────────────────────────────────
+
+_BUYING_SYSTEM_PROMPT = (
+    "Eres un experto en Digital Buying & Trading para adidas Latinoamérica. "
+    "Tu especialidad es interpretar señales de demanda orgánica de Google Search Console "
+    "para informar decisiones de compra, inventario y trading de producto. "
+    "Conoces profundamente las categorías de adidas: Running, Football, Training, "
+    "Lifestyle, Outdoor y Originals. "
+    "Responde SIEMPRE en español. Sé directo, específico y comercialmente relevante. "
+    "Cada recomendación debe conectar el dato de búsqueda con una acción de buying "
+    "o trading concreta. Nunca inventes datos; basa todo en el contexto recibido."
+)
+
+_BUYING_USER_TEMPLATE = """\
+Aquí están las señales de demanda orgánica de adidas LatAm — sección Buying & Trading:
+
+{context}
+
+Por favor, responde con exactamente este formato en markdown:
+
+## 📦 Diagnóstico de Demanda
+_(2-3 oraciones sobre el estado general de la demanda por categoría esta semana)_
+
+## 📈 Categorías con Mayor Momentum
+_(Top 3 categorías con mayor crecimiento en búsquedas — incluye % de cambio y qué tipo \
+de producto buscan los usuarios. Implicación directa para buying.)_
+
+## 📉 Categorías bajo Presión
+_(Top 2-3 categorías perdiendo demanda — implicaciones concretas para inventario o activación)_
+
+## 🔍 Señales de Demanda No-Brand
+_(Los keywords no-brand más relevantes como indicadores de intención de compra — \
+qué productos están buscando los usuarios antes de comprar)_
+
+## 🛒 Recomendaciones de Buying & Trading
+_(4-5 acciones concretas para el equipo: qué categorías priorizar en compra, \
+qué ajustar en inventario, qué impulsar con paid media o activación)_\
+"""
+
+
+def get_buying_insights(context: str, api_key: str) -> str:
+    """
+    Call the Claude API with a Buying & Trading specialist system prompt.
+    Returns the full markdown response as a string.
+    Raises on API errors (caller handles display).
+    """
+    import anthropic
+
+    client  = anthropic.Anthropic(api_key=api_key)
+    model   = _get_claude_model(client)
+    message = client.messages.create(
+        model      = model,
+        max_tokens = 1400,
+        system     = _BUYING_SYSTEM_PROMPT,
+        messages   = [
+            {"role": "user", "content": _BUYING_USER_TEMPLATE.format(context=context)},
         ],
     )
     return message.content[0].text
