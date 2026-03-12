@@ -60,8 +60,13 @@ def load_cached_data():
 def _do_refresh(fast: bool):
     """
     Core refresh logic shared by both buttons.
-    fast=True  → parallel, top-1000 rows per domain, 2 weeks only (~15 s)
-    fast=False → sequential, full pagination, 5 weeks         (~2–5 min)
+
+    Both modes now cover the last 2 complete calendar months + the current
+    partial month so that WoW and MoM comparisons in Buying & Trading always
+    have sufficient data.
+
+    fast=True  → parallel, top-1 000 rows/domain per batch, 3 batches  (~30 s)
+    fast=False → sequential, full pagination, full 2-month range        (~3–8 min)
     """
     from datetime import date, timedelta
     from src.extractor import build_service, extract_all_domains, extract_fast
@@ -74,35 +79,52 @@ def _do_refresh(fast: bool):
             st.sidebar.error(f"Auth failed: {e}")
             return
 
-    # ── Date range ────────────────────────────────────────────────────────────
+    # ── Date math — always cover 2 complete months + current partial ──────────
     today = date.today()
-    # Always pull from the Monday of the previous week to cover both WoW weeks
-    days_since_monday = today.weekday()
-    last_monday = today - timedelta(days=days_since_monday)
-    curr_week_end   = last_monday - timedelta(days=1)          # last Sunday
-    curr_week_start = curr_week_end - timedelta(days=6)        # Monday before that
-    prev_week_start = curr_week_start - timedelta(days=7)
+
+    # Last complete month  (e.g. Feb 1–28 when today = Mar 12)
+    curr_month_start  = today.replace(day=1)
+    last_month_end    = curr_month_start - timedelta(days=1)
+    last_month_start  = last_month_end.replace(day=1)
+
+    # Month before that   (e.g. Jan 1–31 when today = Mar 12)
+    two_months_ago_end   = last_month_start - timedelta(days=1)
+    two_months_ago_start = two_months_ago_end.replace(day=1)
+
+    # Current partial month up to yesterday (needed for WoW current week)
+    partial_end = today - timedelta(days=1)
 
     if fast:
-        # Pull current week + previous week in parallel (two fast batches)
+        # ── 3 parallel batches — one per month-ish slice ──────────────────
+        # Each batch gets the top 1 000 keywords by impressions within its
+        # period, so splitting by month maximises per-period keyword coverage.
+        batches = [
+            (two_months_ago_start, two_months_ago_end, "mes anterior al último"),
+            (last_month_start,     last_month_end,     "último mes completo"),
+            (curr_month_start,     partial_end,        "mes actual parcial (WoW)"),
+        ]
+
         all_frames = []
-        for w_start, w_end in [(prev_week_start, curr_week_start - timedelta(days=1)),
-                                (curr_week_start, curr_week_end)]:
-            with st.spinner(f"Fast pull: {w_start} → {w_end} (all markets in parallel)…"):
+        for b_start, b_end, label in batches:
+            if b_start > b_end:          # skip if range is nonsensical
+                continue
+            with st.spinner(f"⚡ Fast pull {label}: {b_start} → {b_end}…"):
                 try:
-                    df = extract_fast(start_date=w_start, end_date=w_end)
+                    df = extract_fast(start_date=b_start, end_date=b_end)
                     if not df.empty:
                         all_frames.append(df)
                 except Exception as e:
-                    st.sidebar.error(f"Extraction failed: {e}")
+                    st.sidebar.error(f"Extraction failed ({label}): {e}")
                     return
+
         combined = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
-        start, end = prev_week_start, curr_week_end
+        start, end = two_months_ago_start, partial_end
+
     else:
-        # Full extraction — 5 weeks, paginated
-        end   = today - timedelta(days=1)
-        start = end - timedelta(days=34)
-        with st.spinner(f"Full pull: {start} → {end} (this may take a few minutes)…"):
+        # ── Full paginated extraction — entire 2-month window ─────────────
+        start = two_months_ago_start
+        end   = partial_end
+        with st.spinner(f"🔄 Full pull: {start} → {end} (this may take a few minutes)…"):
             try:
                 combined = extract_all_domains(service, start_date=start, end_date=end)
             except Exception as e:
@@ -355,11 +377,11 @@ def render_sidebar() -> str:
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("⚡ Quick", use_container_width=True, type="primary",
-                         help="Parallel · top 1,000 rows/market · last 2 weeks (~15 s)"):
+                         help="Paralelo · top 1,000 filas/mercado · 3 batches: mes anterior + último mes + mes actual (~30 s)"):
                 _do_refresh(fast=True)
         with col_b:
             if st.button("🔄 Full", use_container_width=True,
-                         help="Full pagination · all rows · last 5 weeks (~2–5 min)"):
+                         help="Paginación completa · todas las filas · 2 meses completos + parcial (~3–8 min)"):
                 _do_refresh(fast=False)
 
         st.divider()
