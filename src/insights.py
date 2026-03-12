@@ -506,14 +506,54 @@ def build_explorer_context(keyword: str, matched_df: pd.DataFrame) -> str:
 # ── Email summary generation ───────────────────────────────────────────────────
 
 _EMAIL_SYSTEM_PROMPT = (
-    "Eres un analista SEO senior de adidas para mercados de Latinoamérica. "
-    "Redactas correos ejecutivos claros, concisos y profesionales en español, "
-    "basados en datos reales de Google Search Console. "
-    "Sé directo y específico. Nunca inventes datos; usa solo lo que aparece en el contexto. "
-    "El correo debe ser útil para líderes de marketing, e-commerce o management de adidas LatAm."
+    "Eres un comunicador ejecutivo senior de adidas para mercados de Latinoamérica. "
+    "Redactas correos ejecutivos claros, concisos y de alto impacto en español. "
+    "Cuando se te proporciona un análisis de IA, lo usas como fuente principal y lo "
+    "condensas en una comunicación ejecutiva potente — no lo repites, lo destila. "
+    "Sé específico con números y acciones. Nunca inventes datos. "
+    "El correo debe ser útil para líderes de marketing, e-commerce o management de adidas LatAm. "
+    "Máximo 20 líneas en total — los ejecutivos valoran la brevedad."
 )
 
-_EMAIL_TEMPLATE = """\
+# Template when AI insights are available — uses them as primary source
+_EMAIL_TEMPLATE_WITH_INSIGHTS = """\
+Tengo un análisis completo de IA generado para la sección "{view_name}" de adidas LatAm.
+
+=== ANÁLISIS IA (fuente principal — destila esto en el correo) ===
+{insights}
+
+=== DATOS DE CONTEXTO (referencia secundaria) ===
+{context}
+
+Usando el ANÁLISIS IA como tu fuente principal, redacta un correo ejecutivo en español \
+listo para copiar y enviar. Destila los insights más poderosos en formato ejecutivo — \
+no copies el análisis, transfórmalo en una comunicación de alto impacto.
+
+(NO uses markdown con # ni **, usa SOLO texto plano):
+
+Asunto: [asunto impactante — máximo 12 palabras]
+
+Hola equipo,
+
+[2-3 oraciones que capturen la esencia del análisis — incluye los números más importantes]
+
+Highlights clave:
+- [insight poderoso 1 del análisis con número concreto]
+- [insight poderoso 2 del análisis con número concreto]
+- [insight poderoso 3 del análisis con número concreto]
+- [insight poderoso 4 — solo si aporta valor adicional]
+
+Acciones prioritarias esta semana:
+- [acción más urgente del análisis]
+- [acción de oportunidad del análisis]
+- [acción preventiva del análisis]
+
+Saludos,
+Adidas Search Intelligence Platform\
+"""
+
+# Template when no AI insights exist — uses raw data only
+_EMAIL_TEMPLATE_DATA_ONLY = """\
 Aquí están los datos del reporte de búsqueda orgánica adidas LatAm — sección: {view_name}
 
 {context}
@@ -543,29 +583,44 @@ Adidas Search Intelligence Platform\
 """
 
 
-def get_email_summary(context: str, view_name: str, api_key: str) -> str:
+def get_email_summary(
+    context: str,
+    view_name: str,
+    api_key: str,
+    insights: str | None = None,
+) -> str:
     """
     Call Claude to generate a copy-pasteable Spanish executive email.
+
+    If `insights` is provided (AI analysis already generated for this view),
+    it is used as the primary source and the email becomes a distillation of
+    those insights rather than a re-analysis of raw data.
+
     Returns the email as a plain-text string.
     Raises on API errors (caller handles display).
     """
     import anthropic
 
-    client  = anthropic.Anthropic(api_key=api_key)
-    model   = _get_claude_model(client)
+    client = anthropic.Anthropic(api_key=api_key)
+    model  = _get_claude_model(client)
+
+    if insights:
+        prompt = _EMAIL_TEMPLATE_WITH_INSIGHTS.format(
+            view_name=view_name,
+            insights=insights,
+            context=context,
+        )
+    else:
+        prompt = _EMAIL_TEMPLATE_DATA_ONLY.format(
+            view_name=view_name,
+            context=context,
+        )
+
     message = client.messages.create(
         model      = model,
-        max_tokens = 700,
+        max_tokens = 800,
         system     = _EMAIL_SYSTEM_PROMPT,
-        messages   = [
-            {
-                "role": "user",
-                "content": _EMAIL_TEMPLATE.format(
-                    view_name=view_name,
-                    context=context,
-                ),
-            },
-        ],
+        messages   = [{"role": "user", "content": prompt}],
     )
     return message.content[0].text
 
@@ -574,25 +629,23 @@ def render_email_button(
     view_name: str,
     context: str,
     key_suffix: str = "",
+    insights_cache_key: str | None = None,
 ) -> None:
     """
     Render the '📧 Preparar Correo' button and copyable text area.
 
-    Call at the bottom of each view's render() function.
-
     Args:
-        view_name:  Human-readable view label included in the Claude prompt.
-        context:    Pre-built text summarising this view's current data.
-        key_suffix: Unique suffix to prevent Streamlit widget key collisions.
+        view_name:          Human-readable view label included in the Claude prompt.
+        context:            Pre-built text summarising this view's current data.
+        key_suffix:         Unique suffix to prevent Streamlit widget key collisions.
+        insights_cache_key: session_state key where AI insights are cached for this
+                            view (e.g. "ov_ai_insights_text"). When available the
+                            email is distilled from the insights rather than raw data.
     """
     import streamlit as st
     from config import ANTHROPIC_API_KEY
 
     st.subheader("📧 Preparar Correo Ejecutivo")
-    st.caption(
-        "Genera un resumen de esta sección listo para copiar y enviar por correo. "
-        "Powered by Claude (Anthropic)."
-    )
 
     if not ANTHROPIC_API_KEY:
         st.info(
@@ -601,10 +654,31 @@ def render_email_button(
         )
         return
 
+    # Determine if AI insights are available for this view
+    insights_text = (
+        st.session_state.get(insights_cache_key)
+        if insights_cache_key
+        else None
+    )
+    has_insights = bool(insights_text)
+
+    if has_insights:
+        st.caption(
+            "✨ **Basado en AI Insights** — el correo destilará el análisis de IA ya generado. "
+            "Powered by Claude (Anthropic)."
+        )
+    else:
+        st.caption(
+            "Genera un resumen de esta sección listo para copiar y enviar por correo. "
+            "💡 Genera primero los AI Insights para obtener un correo más potente. "
+            "Powered by Claude (Anthropic)."
+        )
+
     cache_key = f"email_txt_{key_suffix}"
     hash_key  = f"email_hsh_{key_suffix}"
-    # lightweight hash — changes whenever context changes
-    data_hash = f"{len(context)}-{context[:120]}"
+    # Hash includes insights availability so switching modes invalidates cache
+    insights_marker = insights_text[:80] if insights_text else "none"
+    data_hash = f"{len(context)}-{context[:80]}-{insights_marker}"
 
     if st.session_state.get(hash_key) != data_hash:
         st.session_state.pop(cache_key, None)
@@ -612,19 +686,29 @@ def render_email_button(
 
     col_btn, col_note = st.columns([1, 4])
     with col_btn:
+        btn_label = "📧 Generar Correo" if not has_insights else "✨ Generar desde Insights"
         generate = st.button(
-            "📧 Generar Correo",
+            btn_label,
             key=f"email_btn_{key_suffix}",
             type="secondary",
         )
     with col_note:
         if cache_key in st.session_state:
-            st.caption("✅ Correo listo — clic para regenerar.")
+            src = "insights IA" if has_insights else "datos"
+            st.caption(f"✅ Correo listo (desde {src}) — clic para regenerar.")
 
     if generate:
-        with st.spinner("✍️ Redactando correo ejecutivo..."):
+        spinner_msg = (
+            "✨ Destilando insights en correo ejecutivo..."
+            if has_insights
+            else "✍️ Redactando correo ejecutivo..."
+        )
+        with st.spinner(spinner_msg):
             try:
-                result = get_email_summary(context, view_name, ANTHROPIC_API_KEY)
+                result = get_email_summary(
+                    context, view_name, ANTHROPIC_API_KEY,
+                    insights=insights_text,
+                )
                 st.session_state[cache_key] = result
             except Exception as exc:
                 st.error(f"Error al conectar con la API de Claude: {exc}")
@@ -634,6 +718,6 @@ def render_email_button(
         st.text_area(
             "📋 Copia y pega este correo:",
             value=st.session_state[cache_key],
-            height=340,
+            height=360,
             key=f"email_ta_{key_suffix}",
         )

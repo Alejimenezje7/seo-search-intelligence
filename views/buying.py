@@ -416,4 +416,5 @@ def render(df: pd.DataFrame) -> None:
         f"Buying & Trading — Demand Intelligence ({period_label})",
         build_buying_context(cat_data, df, period=period_label),
         key_suffix="buying",
+        insights_cache_key="buy_ai_insights_text",
     )

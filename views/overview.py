@@ -368,4 +368,5 @@ def render(df: pd.DataFrame) -> None:
         "Overview — Search Pulse",
         build_context_summary(wow_flag, df_raw=df),
         key_suffix="overview",
+        insights_cache_key="ov_ai_insights_text",
     )
