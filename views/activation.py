@@ -1,0 +1,667 @@
+"""
+views/activation.py
+-------------------
+SEO Radar — Campaign & Event Intelligence view.
+
+Monitors how commercial campaign and event keywords perform in organic search,
+combining GSC real data for adidas with Ahrefs competitive SERP positioning
+to help the activation team spot signals early and outrank competitors.
+"""
+
+from datetime import date as _date
+import calendar as _cal
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+from src.filters import (
+    add_brand_column,
+    add_campaign_column,
+    render_country_selector,
+    render_filters,
+    CAMPAIGN_CATEGORIES,
+)
+from config import (
+    AHREFS_API_KEY,
+    AHREFS_COMPETITORS,
+    AHREFS_MARKETS,
+    DOMAIN_LABELS,
+)
+from src import ahrefs as _ahrefs
+from src.insights import build_activation_context, render_email_button
+from src.processor import (
+    compute_wow,
+    top_gainers,
+    top_decliners,
+)
+from src.utils import (
+    apply_bw,
+    style_pct_cols,
+    C_BLACK, C_MID, C_XLIGHT,
+    fmt_delta, fmt_int, fmt_pct,
+)
+
+
+# ── Commercial Event Radar ─────────────────────────────────────────────────────
+# Each entry: event name → (peak_month, peak_day, [keyword_patterns])
+# peak_day is the approximate day the event occurs / peaks each year.
+# Keyword patterns are plain substrings matched case-insensitively.
+
+_COMMERCIAL_EVENTS = {
+    "Día de la Madre":  (5,  11, ["dia de la madre", "día de la madre", "dia madre",
+                                   "regalo mama", "regalos mama", "regalo madre"]),
+    "Cyber Day":        (5,  27, ["cyber day", "cyberday"]),
+    "Hot Sale":         (5,  26, ["hot sale", "hotsale"]),
+    "Día del Padre":    (6,  21, ["dia del padre", "día del padre", "dia padre",
+                                   "regalo papa", "regalos papa", "regalo padre"]),
+    "Cyber WoW":        (10,  5, ["cyber wow", "cyberwow"]),
+    "Buen Fin":         (11, 15, ["buen fin", "buenfin"]),
+    "11.11 Solteros":   (11, 11, ["11.11"]),
+    "Black Friday":     (11, 28, ["black friday", "viernes negro", "blackfriday"]),
+    "Cyber Monday":     (12,  1, ["cyber monday", "cybermonday"]),
+    "Navidad":          (12, 24, ["navidad", "christmas", "regalo navidad", "regalos navidad"]),
+    "Rebajas Enero":    (1,   5, ["rebajas enero", "liquidación enero", "liquidacion enero"]),
+}
+
+
+def _next_event_date(today: _date, month: int, day: int) -> _date:
+    """Return the next calendar occurrence of an annual event."""
+    last_day = _cal.monthrange(today.year, month)[1]
+    clamped   = min(day, last_day)
+    candidate = _date(today.year, month, clamped)
+    if candidate < today:
+        last_day_ny = _cal.monthrange(today.year + 1, month)[1]
+        candidate   = _date(today.year + 1, month, min(day, last_day_ny))
+    return candidate
+
+
+def _alert_level(days_away: int, impressions: int, wow_pct) -> tuple[str, str, str]:
+    """
+    Return (emoji, label, css_color) for the event alert level.
+    Priority: proximity + active signal.
+    """
+    has_signal = impressions > 0
+    growing    = wow_pct is not None and wow_pct > 0
+
+    if days_away <= 21 and has_signal:
+        return "🔴", "URGENTE", "#cc2200"
+    if days_away <= 21:
+        return "🔴", "PRÓXIMO", "#cc2200"
+    if days_away <= 45 and has_signal and growing:
+        return "🟠", "PRECALENTANDO", "#cc6600"
+    if days_away <= 60 and has_signal:
+        return "🟡", "SEÑAL TEMPRANA", "#b38600"
+    if days_away <= 90 or has_signal:
+        return "🟢", "EN RADAR", "#1a7a1a"
+    return "⚪", "SIN SEÑAL", "#aaaaaa"
+
+
+def _event_radar(df: pd.DataFrame) -> None:
+    st.subheader("📡 Radar de Eventos Comerciales")
+    st.caption(
+        "Detecta cuándo los consumidores empiezan a buscar keywords de eventos comerciales — "
+        "anticípate con contenido SEO y activación digital antes que la competencia. "
+        "Señales GSC reales (adidas) + posicionamiento SERP vs competidores vía Ahrefs."
+    )
+
+    if df.empty or "keyword" not in df.columns:
+        st.info("Carga datos para activar el Radar de Eventos.")
+        return
+
+    api_key = AHREFS_API_KEY or ""
+
+    # ── Market detection for Ahrefs country param ──────────────────────────────
+    # If df is already filtered to one market, auto-detect.
+    # Otherwise offer a compact selector for the SERP comparison.
+    ahrefs_country  = "MX"
+    adidas_domain   = "adidas.mx"
+    selected_market = list(AHREFS_MARKETS.keys())[0]
+
+    if "domain" in df.columns and df["domain"].nunique() == 1:
+        _domain_url = df["domain"].iloc[0]
+        _mkt = DOMAIN_LABELS.get(_domain_url, "")
+        if _mkt in AHREFS_MARKETS:
+            selected_market = _mkt
+            ahrefs_country  = AHREFS_MARKETS[_mkt]["country"]
+            adidas_domain   = AHREFS_MARKETS[_mkt]["domain"]
+    else:
+        with st.container(border=True):
+            _col_mkt, _col_note = st.columns([1, 2])
+            with _col_mkt:
+                selected_market = st.selectbox(
+                    "Mercado (SERP Ahrefs)",
+                    list(AHREFS_MARKETS.keys()),
+                    key="radar_ahrefs_mkt",
+                )
+            with _col_note:
+                st.caption(
+                    "Selecciona un mercado para ver posiciones SERP competitivas. "
+                    "Los datos GSC reflejan todos los mercados cargados."
+                )
+        ahrefs_country = AHREFS_MARKETS[selected_market]["country"]
+        adidas_domain  = AHREFS_MARKETS[selected_market]["domain"]
+
+    # ── Temporality banner ─────────────────────────────────────────────────────
+    _gsc_min_str = _gsc_max_str = "—"
+    if "date" in df.columns and not df["date"].dropna().empty:
+        _gsc_min = pd.to_datetime(df["date"]).min()
+        _gsc_max = pd.to_datetime(df["date"]).max()
+        _gsc_min_str = _gsc_min.strftime("%d %b %Y")
+        _gsc_max_str = _gsc_max.strftime("%d %b %Y")
+    _snapshot = _ahrefs.snapshot_date()
+    st.info(
+        f"📅 **Temporalidad** — "
+        f"GSC adidas ({selected_market}): **{_gsc_min_str} → {_gsc_max_str}** · "
+        f"Ahrefs snapshot: **{_snapshot}** (primer día del mes en curso)"
+    )
+
+    today    = _date.today()
+    kw_lower = df["keyword"].str.lower()
+
+    event_signals = []
+    for ev_name, (ev_month, ev_day, ev_patterns) in _COMMERCIAL_EVENTS.items():
+        next_date = _next_event_date(today, ev_month, ev_day)
+        days_away = (next_date - today).days
+
+        # Match keywords
+        mask = pd.Series(False, index=df.index)
+        for pat in ev_patterns:
+            mask |= kw_lower.str.contains(pat, na=False, regex=False)
+        event_df = df[mask]
+
+        impressions_curr = 0
+        impressions_prev = 0
+        wow_pct          = None
+        keywords_found   = 0
+        top_kws          = pd.DataFrame()
+        avg_position     = None   # impressions-weighted avg GSC position for adidas
+
+        if not event_df.empty:
+            keywords_found = event_df["keyword"].nunique()
+            # Compute impressions-weighted avg position from GSC
+            if "position" in event_df.columns:
+                _total_impr = event_df["impressions"].sum()
+                if _total_impr > 0:
+                    avg_position = round(
+                        (event_df["impressions"] * event_df["position"]).sum() / _total_impr, 1
+                    )
+            try:
+                wow = compute_wow(event_df, min_clicks=0, min_impressions=0)
+                if not wow.empty:
+                    impressions_curr = int(wow["impressions_curr"].sum())
+                    impressions_prev = int(wow["impressions_prev"].sum())
+                    if impressions_prev > 0:
+                        wow_pct = round(
+                            (impressions_curr - impressions_prev) / impressions_prev * 100, 1
+                        )
+                    elif impressions_curr > 0:
+                        wow_pct = 100.0   # new signal — no prior baseline
+                    top_kws = (
+                        wow.nlargest(8, "impressions_curr")
+                        [["keyword", "impressions_curr", "impressions_prev", "impressions_pct"]]
+                        .copy()
+                    )
+                else:
+                    impressions_curr = int(event_df["impressions"].sum())
+            except Exception:
+                impressions_curr = int(event_df["impressions"].sum())
+
+        emoji, label, color = _alert_level(days_away, impressions_curr, wow_pct)
+
+        event_signals.append({
+            "name":             ev_name,
+            "next_date":        next_date,
+            "days_away":        days_away,
+            "impressions_curr": impressions_curr,
+            "impressions_prev": impressions_prev,
+            "wow_pct":          wow_pct,
+            "keywords_found":   keywords_found,
+            "top_kws":          top_kws,
+            "emoji":            emoji,
+            "label":            label,
+            "color":            color,
+            "avg_position":     avg_position,
+            "primary_kw":       ev_patterns[0],   # representative keyword for Ahrefs SERP
+        })
+
+    # Sort: active signals first, then by proximity
+    event_signals.sort(key=lambda e: (0 if e["impressions_curr"] > 0 else 1, e["days_away"]))
+
+    # ── Summary strip — only events with signal or within 120 days ─────────────
+    visible = [e for e in event_signals if e["impressions_curr"] > 0 or e["days_away"] <= 120]
+
+    if not visible:
+        st.info("No hay eventos en los próximos 120 días ni señales activas. Carga más datos.")
+        return
+
+    # ── Event cards — 3 per row ────────────────────────────────────────────────
+    for row_start in range(0, len(visible), 3):
+        cols = st.columns(3)
+        for col, ev in zip(cols, visible[row_start : row_start + 3]):
+            with col:
+                with st.container(border=True):
+                    # Alert badge
+                    st.markdown(
+                        f"<span style='background:{ev['color']};color:#fff;padding:2px 10px;"
+                        f"border-radius:4px;font-size:0.72rem;font-weight:700;"
+                        f"letter-spacing:0.06em;'>{ev['emoji']} {ev['label']}</span>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(f"**{ev['name']}**")
+                    st.caption(
+                        f"📅 {ev['next_date'].strftime('%d %b %Y')} · "
+                        f"**{ev['days_away']} días**"
+                    )
+                    if ev["impressions_curr"] > 0:
+                        c1, c2 = st.columns(2)
+                        c1.metric("Impresiones", f"{ev['impressions_curr']:,}")
+                        if ev["wow_pct"] is not None:
+                            arrow = "▲" if ev["wow_pct"] >= 0 else "▼"
+                            c2.metric("WoW", f"{arrow} {abs(ev['wow_pct']):.0f}%")
+                        st.caption(f"🔑 {ev['keywords_found']} keyword(s) detectado(s)")
+                        if ev["avg_position"] is not None:
+                            st.caption(f"📍 Pos. media adidas (GSC): **#{ev['avg_position']:.1f}**")
+                    else:
+                        st.caption("_Sin señal en datos actuales_")
+
+    # ── Keyword + SERP detail per active event ─────────────────────────────────
+    active = [e for e in event_signals if not e["top_kws"].empty]
+    if active:
+        st.markdown("##### 🔍 Detalle de keywords y posicionamiento SERP por evento")
+
+        _comp_labels  = {c["domain"]: c["label"] for c in AHREFS_COMPETITORS}
+        _comp_domains = [c["domain"] for c in AHREFS_COMPETITORS]
+
+        def _match_tracked(raw_d: str) -> str | None:
+            """Return the tracked domain that matches `raw_d`, or None."""
+            for td in [adidas_domain] + _comp_domains:
+                if td in raw_d or raw_d in td:
+                    return td
+            return None
+
+        for ev in active:
+            kw_count = ev["keywords_found"]
+            header   = (
+                f"{ev['emoji']} **{ev['name']}** — "
+                f"{kw_count} keyword(s)  ·  {ev['days_away']}d para el evento"
+            )
+            with st.expander(header, expanded=(ev["days_away"] <= 45)):
+                # ── GSC keyword WoW table ──────────────────────────────────────
+                detail = ev["top_kws"].rename(columns={
+                    "keyword":          "Keyword",
+                    "impressions_curr": "Esta Semana",
+                    "impressions_prev": "Semana Ant.",
+                    "impressions_pct":  "WoW %",
+                }).copy()
+                if "WoW %" in detail.columns:
+                    detail["WoW %"] = detail["WoW %"].apply(
+                        lambda v: (
+                            f"▲ {v:.1f}%" if (v is not None and not pd.isna(v) and v >= 0)
+                            else f"▼ {abs(v):.1f}%" if (v is not None and not pd.isna(v))
+                            else "—"
+                        )
+                    )
+                st.dataframe(detail, use_container_width=True, hide_index=True)
+                if ev["wow_pct"] is not None and ev["wow_pct"] > 0 and ev["days_away"] <= 60:
+                    st.info(
+                        f"💡 **Señal activa {ev['days_away']}d antes del evento** — "
+                        "considera activar contenido SEO, landing pages y paid media ahora."
+                    )
+
+                # ── SERP competitive positioning (Ahrefs) ─────────────────────
+                st.markdown("---")
+                st.markdown("**📊 Posicionamiento SERP — adidas vs competidores**")
+                st.caption(
+                    f"Keyword: `{ev['primary_kw']}` · "
+                    f"País: `{ahrefs_country}` · "
+                    f"Fuente: Ahrefs snapshot {_snapshot}"
+                )
+
+                if not api_key:
+                    st.caption(
+                        "💡 Configura `AHREFS_API_KEY` en tus secrets para ver "
+                        "posicionamiento SERP competitivo aquí."
+                    )
+                else:
+                    with st.spinner(f"Cargando SERP «{ev['primary_kw']}»…"):
+                        serp_df = _ahrefs.fetch_serp_positions(
+                            ev["primary_kw"], ahrefs_country, api_key
+                        )
+
+                    if serp_df.empty or "domain" not in serp_df.columns:
+                        st.caption("_Sin datos SERP disponibles para esta keyword._")
+                    else:
+                        _serp = serp_df.copy()
+                        _serp["tracked"] = _serp["domain"].apply(_match_tracked)
+                        _tracked = _serp[_serp["tracked"].notna()].sort_values("position")
+
+                        if _tracked.empty:
+                            st.caption(
+                                "_Ninguna marca rastreada aparece en el top SERP "
+                                "para esta keyword._"
+                            )
+                        else:
+                            _rows = []
+                            for _, _r in _tracked.iterrows():
+                                _td    = _r["tracked"]
+                                _brand = (
+                                    "adidas"
+                                    if _td == adidas_domain
+                                    else _comp_labels.get(_td, _td)
+                                )
+                                _icon  = "⚫" if _td == adidas_domain else "⚪"
+                                _pos   = int(_r["position"]) if pd.notna(_r["position"]) else None
+                                _traf  = (
+                                    f"{int(_r['traffic']):,}"
+                                    if "traffic" in _r.index and pd.notna(_r.get("traffic"))
+                                    else "—"
+                                )
+                                _rows.append({
+                                    "Marca":        f"{_icon} {_brand}",
+                                    "Posición":     _pos if _pos is not None else "—",
+                                    "Tráfico Est.": _traf,
+                                })
+
+                            _serp_display = pd.DataFrame(_rows)
+
+                            # Horizontal bar — lower position = better → invert x axis
+                            _pos_vals = [
+                                r["Posición"] if isinstance(r["Posición"], int) else 0
+                                for r in _rows
+                            ]
+                            _fig = go.Figure(go.Bar(
+                                y=_serp_display["Marca"],
+                                x=_pos_vals,
+                                orientation="h",
+                                marker_color=[
+                                    C_BLACK if "adidas" in str(m) else C_MID
+                                    for m in _serp_display["Marca"]
+                                ],
+                                text=[f"#{v}" if v > 0 else "" for v in _pos_vals],
+                                textposition="outside",
+                            ))
+                            _fig.update_xaxes(
+                                autorange="reversed",
+                                title_text="Posición SERP (menor = mejor)",
+                            )
+                            _fig.update_yaxes(title_text="")
+                            apply_bw(_fig, height=max(160, len(_rows) * 42))
+                            st.plotly_chart(_fig, use_container_width=True)
+                            st.dataframe(_serp_display, use_container_width=True, hide_index=True)
+
+                            if ev["avg_position"] is not None:
+                                st.caption(
+                                    f"📍 Posición media adidas en GSC (datos reales): "
+                                    f"**#{ev['avg_position']:.1f}** · "
+                                    f"Posición Ahrefs (estimada): ver tabla arriba"
+                                )
+
+
+# ── KPI strip ──────────────────────────────────────────────────────────────────
+
+def _kpi_strip(campaign_df: pd.DataFrame) -> None:
+    if campaign_df.empty:
+        st.info("No campaign keywords detected in the loaded data. Refresh data or broaden the market filter.")
+        return
+
+    total_kws  = campaign_df["keyword"].nunique() if "keyword" in campaign_df.columns else 0
+    total_impr = int(campaign_df["impressions"].sum())
+    total_clks = int(campaign_df["clicks"].sum())
+    avg_ctr    = (
+        round(campaign_df["clicks"].sum() / campaign_df["impressions"].sum() * 100, 2)
+        if campaign_df["impressions"].sum() > 0 else 0.0
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Campaign Keywords",  f"{total_kws:,}",    help="Unique keywords matching campaign categories")
+    c2.metric("Total Impressions",  f"{total_impr:,}",   help="Search demand for all campaign terms")
+    c3.metric("Total Clicks",       f"{total_clks:,}")
+    c4.metric("Avg CTR",            f"{avg_ctr:.2f}%",   help="Click-through rate on campaign keywords")
+
+
+# ── Campaign category performance table ────────────────────────────────────────
+
+def _category_performance(campaign_df: pd.DataFrame) -> None:
+    st.subheader("Campaign Category Performance")
+    st.caption("Search volume and engagement per campaign theme.")
+
+    if campaign_df.empty or "campaign_category" not in campaign_df.columns:
+        st.info("No campaign data available.")
+        return
+
+    agg = (
+        campaign_df
+        .groupby("campaign_category", as_index=False)
+        .agg(
+            keywords    =("keyword",      "nunique"),
+            impressions =("impressions",  "sum"),
+            clicks      =("clicks",       "sum"),
+        )
+    )
+    agg["ctr"] = agg.apply(
+        lambda r: f"{r['clicks'] / r['impressions'] * 100:.2f}%" if r["impressions"] > 0 else "0%",
+        axis=1,
+    )
+    agg = agg.sort_values("impressions", ascending=False)
+    agg = agg.rename(columns={
+        "campaign_category": "Campaign Type",
+        "keywords":          "Unique Keywords",
+        "impressions":       "Impressions",
+        "clicks":            "Clicks",
+        "ctr":               "CTR",
+    })
+    st.dataframe(agg, use_container_width=True, hide_index=True)
+
+    # Horizontal bar — impressions by category
+    bar_data = agg.head(10)
+    fig = go.Figure(go.Bar(
+        y=bar_data["Campaign Type"],
+        x=bar_data["Impressions"],
+        orientation="h",
+        marker_color=C_BLACK,
+        text=bar_data["Impressions"].apply(lambda v: f"{int(v):,}"),
+        textposition="outside",
+    ))
+    fig.update_layout(xaxis_title="Impressions", yaxis_title="")
+    apply_bw(fig, height=300)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ── Campaign WoW trends ─────────────────────────────────────────────────────────
+
+def _campaign_wow(campaign_df: pd.DataFrame, top_n: int) -> None:
+    st.subheader("Campaign Keywords — Week-over-Week Trend")
+    st.caption("Which campaign terms are gaining or losing search traction this week.")
+
+    if campaign_df.empty:
+        st.info("No campaign data available.")
+        return
+
+    tab_rising, tab_declining = st.tabs(["▲ Rising Campaign Terms", "▼ Declining Campaign Terms"])
+
+    for tab, fn, label in [
+        (tab_rising,    top_gainers,   "Rising"),
+        (tab_declining, top_decliners, "Declining"),
+    ]:
+        with tab:
+            try:
+                wow = compute_wow(campaign_df, min_clicks=2, min_impressions=10)
+            except Exception as exc:
+                st.error(f"Could not compute WoW: {exc}")
+                continue
+            if wow.empty:
+                st.info("Not enough data for WoW comparison.")
+                continue
+
+            result = fn(wow, "impressions", n=top_n)
+            if result.empty:
+                st.info(f"No {label.lower()} campaign keywords this period.")
+                continue
+
+            # Attach campaign category
+            if "campaign_category" in campaign_df.columns:
+                kw_cat = campaign_df[["keyword", "campaign_category"]].drop_duplicates("keyword")
+                result = result.merge(kw_cat, on="keyword", how="left")
+
+            extra = ["campaign_category"] if "campaign_category" in result.columns else []
+            disp_cols = ["keyword"] + extra + [
+                "impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"
+            ]
+            disp_cols = [c for c in disp_cols if c in result.columns]
+            display = result[disp_cols].copy()
+            display["impressions_prev"]  = display["impressions_prev"].apply(fmt_int)
+            display["impressions_curr"]  = display["impressions_curr"].apply(fmt_int)
+            display["impressions_delta"] = display["impressions_delta"].apply(fmt_delta)
+            display["impressions_pct"]   = display["impressions_pct"].apply(fmt_pct)
+            display = display.rename(columns={
+                "keyword":            "Keyword",
+                "campaign_category":  "Campaign Type",
+                "impressions_prev":   "Prev Week",
+                "impressions_curr":   "This Week",
+                "impressions_delta":  "Change",
+                "impressions_pct":    "% Change",
+            })
+            st.dataframe(style_pct_cols(display), use_container_width=True, hide_index=True)
+
+
+# ── Campaign category deep-dive tabs ──────────────────────────────────────────
+
+def _category_tabs(campaign_df: pd.DataFrame, top_n: int) -> None:
+    st.subheader("Campaign Type — Keyword Detail")
+    st.caption("Top-performing keywords within each campaign category.")
+
+    if campaign_df.empty or "campaign_category" not in campaign_df.columns:
+        st.info("No campaign data.")
+        return
+
+    active_cats = [c for c in CAMPAIGN_CATEGORIES.keys() if c in campaign_df["campaign_category"].unique()]
+    if not active_cats:
+        st.info("No active campaign categories found in the loaded data.")
+        return
+
+    tabs = st.tabs(active_cats)
+    for tab, cat in zip(tabs, active_cats):
+        with tab:
+            subset = campaign_df[campaign_df["campaign_category"] == cat]
+            if subset.empty:
+                st.info(f"No data for {cat}.")
+                continue
+
+            top_kws = (
+                subset
+                .groupby("keyword", as_index=False)
+                .agg(impressions=("impressions", "sum"), clicks=("clicks", "sum"))
+                .sort_values("impressions", ascending=False)
+                .head(top_n)
+            )
+            top_kws["ctr"] = top_kws.apply(
+                lambda r: f"{r['clicks'] / r['impressions'] * 100:.2f}%"
+                if r["impressions"] > 0 else "0%",
+                axis=1,
+            )
+
+            col_table, col_chart = st.columns([2, 1])
+            with col_table:
+                st.dataframe(
+                    top_kws.rename(columns={
+                        "keyword": "Keyword", "impressions": "Impressions",
+                        "clicks": "Clicks", "ctr": "CTR",
+                    }),
+                    use_container_width=True, hide_index=True,
+                )
+            with col_chart:
+                chart_data = top_kws.head(10)
+                fig = go.Figure(go.Bar(
+                    y=chart_data["keyword"],
+                    x=chart_data["impressions"],
+                    orientation="h",
+                    marker_color=C_BLACK,
+                ))
+                apply_bw(fig, height=280)
+                st.plotly_chart(fig, use_container_width=True)
+
+
+# ── Custom campaign keyword search ─────────────────────────────────────────────
+
+def _custom_search(df: pd.DataFrame) -> None:
+    st.subheader("Search Any Campaign Term")
+    st.caption("Look up impressions and clicks for any keyword — e.g. a product launch, sale name, or campaign tag.")
+
+    with st.container(border=True):
+        search = st.text_input(
+            "Keyword / campaign term",
+            placeholder="e.g.  black friday,  copa america,  ultraboost 24",
+            key="act_search",
+        )
+
+    if not search:
+        return
+
+    results = df[df["keyword"].str.contains(search, case=False, na=False)]
+    if results.empty:
+        st.info(f"No keywords found matching '{search}'.")
+        return
+
+    st.caption(f"{results['keyword'].nunique()} unique keywords match '{search}'")
+
+    summary = (
+        results
+        .groupby("keyword", as_index=False)
+        .agg(impressions=("impressions", "sum"), clicks=("clicks", "sum"))
+        .sort_values("impressions", ascending=False)
+        .head(50)
+    )
+    summary["ctr"] = summary.apply(
+        lambda r: f"{r['clicks'] / r['impressions'] * 100:.2f}%" if r["impressions"] > 0 else "0%",
+        axis=1,
+    )
+    st.dataframe(
+        summary.rename(columns={
+            "keyword": "Keyword", "impressions": "Impressions",
+            "clicks": "Clicks", "ctr": "CTR",
+        }),
+        use_container_width=True, hide_index=True,
+    )
+
+
+# ── Main render ────────────────────────────────────────────────────────────────
+
+def render(df: pd.DataFrame) -> None:
+    st.title("📡 SEO Radar — Campaign & Event Intelligence")
+    st.caption(
+        "Monitorea eventos comerciales y keywords de campaña en búsqueda orgánica. "
+        "GSC real (adidas) + posicionamiento SERP competitivo vía Ahrefs."
+    )
+
+    if df.empty:
+        st.warning("No data loaded. Click **⚡ Quick** or **🔄 Full** in the sidebar.")
+        return
+
+    df = add_brand_column(df)
+    df = add_campaign_column(df)
+
+    with st.container(border=True):
+        df = render_country_selector(df, key="act_country")
+
+    _, top_n = render_filters(df, prefix="act")
+
+    campaign_df = df[df["campaign_category"].notna()].copy()
+
+    _event_radar(df)
+    st.divider()
+    _kpi_strip(campaign_df)
+    st.divider()
+    _category_performance(campaign_df)
+    st.divider()
+    _campaign_wow(campaign_df, top_n)
+    st.divider()
+    _category_tabs(campaign_df, top_n)
+    st.divider()
+    _custom_search(df)
+    st.divider()
+    render_email_button(
+        "SEO Radar — Campaign & Event Signals",
+        build_activation_context(campaign_df),
+        key_suffix="activation",
+    )
