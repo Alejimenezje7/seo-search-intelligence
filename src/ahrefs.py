@@ -124,29 +124,25 @@ _SE_METRICS_SELECT = (
 @st.cache_data(ttl=86_400, show_spinner=False)
 def _fetch_single_metrics(
     domain: str,
-    country: str,
     api_key: str,
 ) -> dict:
     """
-    GET /v3/site-explorer/metrics for one domain.
-    Cached per (domain, country) — safe to call in a loop.
+    GET /v3/site-explorer/metrics for one domain (global — no country param).
+    NOTE: site-explorer/metrics does NOT accept a `country` parameter;
+    it always returns global data. Cached per domain.
     """
-    params: dict = {
-        "target":   domain,
-        "mode":     "subdomains",
-        "protocol": "both",
-        "date":     snapshot_date(),
-        "select":   _SE_METRICS_SELECT,
-        "output":   "json",
-    }
-    if country:
-        params["country"] = country
-
     try:
         resp = requests.get(
             f"{_BASE}/site-explorer/metrics",
             headers=_headers(api_key),
-            params=params,
+            params={
+                "target":   domain,
+                "mode":     "subdomains",
+                "protocol": "both",
+                "date":     snapshot_date(),
+                "select":   _SE_METRICS_SELECT,
+                "output":   "json",
+            },
             timeout=20,
         )
         if not resp.ok:
@@ -184,7 +180,7 @@ def fetch_batch_metrics(
 
     rows = []
     for i, domain in enumerate(domains):
-        m = _fetch_single_metrics(domain, country, api_key)
+        m = _fetch_single_metrics(domain, api_key)
         rows.append({
             "label":             labels[i] if i < len(labels) else domain,
             "domain":            domain,
@@ -341,11 +337,11 @@ def fetch_top_organic_keywords(
 @st.cache_data(ttl=86_400, show_spinner=False)
 def fetch_domain_metrics(
     target: str,
-    country: str,
     api_key: str,
 ) -> dict | None:
     """
-    GET /v3/site-explorer/metrics — single-domain snapshot.
+    GET /v3/site-explorer/metrics — single-domain global snapshot.
+    NOTE: country param not supported by this endpoint.
     Fields: org_keywords, org_traffic, domain_rating, refdomains.
     """
     if not api_key:
@@ -359,7 +355,6 @@ def fetch_domain_metrics(
                 "target":   target,
                 "mode":     "subdomains",
                 "protocol": "both",
-                "country":  country,
                 "date":     snapshot_date(),
                 "select":   "org_keywords,org_traffic,domain_rating,refdomains",
                 "output":   "json",
