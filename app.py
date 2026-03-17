@@ -423,7 +423,7 @@ def render_sidebar() -> str:
                 "📈  Week-over-Week",
                 "📅  Month-to-Date",
                 "🛒  Buying & Trading",
-                "🎯  Digital Activation",
+                "🎯  SEO Radar",
                 "🔍  Keyword Explorer",
                 "💡  Oportunidades SEO",
                 "⚔️  Competitor Intelligence",
@@ -492,7 +492,7 @@ def main():
         mtd.render(df)
     elif page == "Buying & Trading":
         buying.render(df)
-    elif page == "Digital Activation":
+    elif page == "SEO Radar":
         activation.render(df)
     elif page == "Keyword Explorer":
         explorer.render(df)

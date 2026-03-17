@@ -369,3 +369,77 @@ def fetch_domain_metrics(
     except Exception as e:
         _set_error(f"Error en domain metrics: {e}")
         return None
+
+
+# ── serp-overview ──────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=86_400, show_spinner=False)
+def fetch_serp_positions(
+    keyword: str,
+    country: str,
+    api_key: str,
+    top_positions: int = 20,
+) -> pd.DataFrame:
+    """
+    GET /v3/serp-overview
+
+    Returns organic SERP positions for `keyword` in `country`.
+    One row per result in the top SERP.
+
+    Columns: position, domain, url, domain_rating, traffic, type, update_date
+
+    The `domain` column is extracted from the `url` field (scheme + www stripped).
+    Cached per (keyword, country) for 24 hours to minimise API credit usage.
+    """
+    if not api_key or not keyword:
+        return pd.DataFrame()
+
+    import re as _re
+
+    try:
+        resp = requests.get(
+            f"{_BASE}/serp-overview",
+            headers=_headers(api_key),
+            params={
+                "keyword":       keyword,
+                "country":       country,
+                "select":        "position,url,domain_rating,traffic,type,update_date",
+                "top_positions": top_positions,
+                "output":        "json",
+            },
+            timeout=20,
+        )
+        if not resp.ok:
+            _set_error(f"HTTP {resp.status_code} serp-overview — {resp.text[:400]}")
+            return pd.DataFrame()
+
+        body = resp.json()
+        # Ahrefs may wrap the array under "positions" or "serps"
+        data = body.get("positions") or body.get("serps") or []
+        _clear_error()
+    except requests.Timeout:
+        _set_error("Timeout en serp-overview (>20 s).")
+        return pd.DataFrame()
+    except Exception as e:
+        _set_error(f"Error en serp-overview: {e}")
+        return pd.DataFrame()
+
+    if not data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data)
+
+    # Extract bare domain from URL (strip scheme + optional www)
+    if "url" in df.columns:
+        df["domain"] = df["url"].apply(
+            lambda u: _re.sub(r"^https?://(www\.)?", "", str(u)).split("/")[0]
+            if pd.notna(u) else ""
+        )
+
+    for col in ["position", "traffic"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "domain_rating" in df.columns:
+        df["domain_rating"] = pd.to_numeric(df["domain_rating"], errors="coerce")
+
+    return df

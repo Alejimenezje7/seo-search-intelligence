@@ -1,11 +1,11 @@
 """
 views/activation.py
 -------------------
-Digital Activation — Campaign Signal Intelligence view.
+SEO Radar — Campaign & Event Intelligence view.
 
-Monitors how commercial campaign keywords perform in organic search,
-helping the activation team understand which messages drive search behavior
-and which markets respond best to campaign activity.
+Monitors how commercial campaign and event keywords perform in organic search,
+combining GSC real data for adidas with Ahrefs competitive SERP positioning
+to help the activation team spot signals early and outrank competitors.
 """
 
 from datetime import date as _date
@@ -22,6 +22,13 @@ from src.filters import (
     render_filters,
     CAMPAIGN_CATEGORIES,
 )
+from config import (
+    AHREFS_API_KEY,
+    AHREFS_COMPETITORS,
+    AHREFS_MARKETS,
+    DOMAIN_LABELS,
+)
+from src import ahrefs as _ahrefs
 from src.insights import build_activation_context, render_email_button
 from src.processor import (
     compute_wow,
@@ -95,14 +102,61 @@ def _event_radar(df: pd.DataFrame) -> None:
     st.caption(
         "Detecta cuándo los consumidores empiezan a buscar keywords de eventos comerciales — "
         "anticípate con contenido SEO y activación digital antes que la competencia. "
-        "Señales basadas en impresiones orgánicas WoW por evento."
+        "Señales GSC reales (adidas) + posicionamiento SERP vs competidores vía Ahrefs."
     )
 
     if df.empty or "keyword" not in df.columns:
         st.info("Carga datos para activar el Radar de Eventos.")
         return
 
-    today = _date.today()
+    api_key = AHREFS_API_KEY or ""
+
+    # ── Market detection for Ahrefs country param ──────────────────────────────
+    # If df is already filtered to one market, auto-detect.
+    # Otherwise offer a compact selector for the SERP comparison.
+    ahrefs_country  = "MX"
+    adidas_domain   = "adidas.mx"
+    selected_market = list(AHREFS_MARKETS.keys())[0]
+
+    if "domain" in df.columns and df["domain"].nunique() == 1:
+        _domain_url = df["domain"].iloc[0]
+        _mkt = DOMAIN_LABELS.get(_domain_url, "")
+        if _mkt in AHREFS_MARKETS:
+            selected_market = _mkt
+            ahrefs_country  = AHREFS_MARKETS[_mkt]["country"]
+            adidas_domain   = AHREFS_MARKETS[_mkt]["domain"]
+    else:
+        with st.container(border=True):
+            _col_mkt, _col_note = st.columns([1, 2])
+            with _col_mkt:
+                selected_market = st.selectbox(
+                    "Mercado (SERP Ahrefs)",
+                    list(AHREFS_MARKETS.keys()),
+                    key="radar_ahrefs_mkt",
+                )
+            with _col_note:
+                st.caption(
+                    "Selecciona un mercado para ver posiciones SERP competitivas. "
+                    "Los datos GSC reflejan todos los mercados cargados."
+                )
+        ahrefs_country = AHREFS_MARKETS[selected_market]["country"]
+        adidas_domain  = AHREFS_MARKETS[selected_market]["domain"]
+
+    # ── Temporality banner ─────────────────────────────────────────────────────
+    _gsc_min_str = _gsc_max_str = "—"
+    if "date" in df.columns and not df["date"].dropna().empty:
+        _gsc_min = pd.to_datetime(df["date"]).min()
+        _gsc_max = pd.to_datetime(df["date"]).max()
+        _gsc_min_str = _gsc_min.strftime("%d %b %Y")
+        _gsc_max_str = _gsc_max.strftime("%d %b %Y")
+    _snapshot = _ahrefs.snapshot_date()
+    st.info(
+        f"📅 **Temporalidad** — "
+        f"GSC adidas ({selected_market}): **{_gsc_min_str} → {_gsc_max_str}** · "
+        f"Ahrefs snapshot: **{_snapshot}** (primer día del mes en curso)"
+    )
+
+    today    = _date.today()
     kw_lower = df["keyword"].str.lower()
 
     event_signals = []
@@ -121,9 +175,17 @@ def _event_radar(df: pd.DataFrame) -> None:
         wow_pct          = None
         keywords_found   = 0
         top_kws          = pd.DataFrame()
+        avg_position     = None   # impressions-weighted avg GSC position for adidas
 
         if not event_df.empty:
             keywords_found = event_df["keyword"].nunique()
+            # Compute impressions-weighted avg position from GSC
+            if "position" in event_df.columns:
+                _total_impr = event_df["impressions"].sum()
+                if _total_impr > 0:
+                    avg_position = round(
+                        (event_df["impressions"] * event_df["position"]).sum() / _total_impr, 1
+                    )
             try:
                 wow = compute_wow(event_df, min_clicks=0, min_impressions=0)
                 if not wow.empty:
@@ -159,6 +221,8 @@ def _event_radar(df: pd.DataFrame) -> None:
             "emoji":            emoji,
             "label":            label,
             "color":            color,
+            "avg_position":     avg_position,
+            "primary_kw":       ev_patterns[0],   # representative keyword for Ahrefs SERP
         })
 
     # Sort: active signals first, then by proximity
@@ -171,7 +235,7 @@ def _event_radar(df: pd.DataFrame) -> None:
         st.info("No hay eventos en los próximos 120 días ni señales activas. Carga más datos.")
         return
 
-    # Cards — 3 per row
+    # ── Event cards — 3 per row ────────────────────────────────────────────────
     for row_start in range(0, len(visible), 3):
         cols = st.columns(3)
         for col, ev in zip(cols, visible[row_start : row_start + 3]):
@@ -196,24 +260,40 @@ def _event_radar(df: pd.DataFrame) -> None:
                             arrow = "▲" if ev["wow_pct"] >= 0 else "▼"
                             c2.metric("WoW", f"{arrow} {abs(ev['wow_pct']):.0f}%")
                         st.caption(f"🔑 {ev['keywords_found']} keyword(s) detectado(s)")
+                        if ev["avg_position"] is not None:
+                            st.caption(f"📍 Pos. media adidas (GSC): **#{ev['avg_position']:.1f}**")
                     else:
                         st.caption("_Sin señal en datos actuales_")
 
-    # ── Keyword detail per active event ────────────────────────────────────────
+    # ── Keyword + SERP detail per active event ─────────────────────────────────
     active = [e for e in event_signals if not e["top_kws"].empty]
     if active:
-        st.markdown("##### 🔍 Detalle de keywords por evento")
+        st.markdown("##### 🔍 Detalle de keywords y posicionamiento SERP por evento")
+
+        _comp_labels  = {c["domain"]: c["label"] for c in AHREFS_COMPETITORS}
+        _comp_domains = [c["domain"] for c in AHREFS_COMPETITORS]
+
+        def _match_tracked(raw_d: str) -> str | None:
+            """Return the tracked domain that matches `raw_d`, or None."""
+            for td in [adidas_domain] + _comp_domains:
+                if td in raw_d or raw_d in td:
+                    return td
+            return None
+
         for ev in active:
             kw_count = ev["keywords_found"]
-            header   = f"{ev['emoji']} **{ev['name']}** — {kw_count} keyword(s)  ·  {ev['days_away']}d para el evento"
+            header   = (
+                f"{ev['emoji']} **{ev['name']}** — "
+                f"{kw_count} keyword(s)  ·  {ev['days_away']}d para el evento"
+            )
             with st.expander(header, expanded=(ev["days_away"] <= 45)):
+                # ── GSC keyword WoW table ──────────────────────────────────────
                 detail = ev["top_kws"].rename(columns={
                     "keyword":          "Keyword",
                     "impressions_curr": "Esta Semana",
                     "impressions_prev": "Semana Ant.",
                     "impressions_pct":  "WoW %",
                 }).copy()
-                # Format WoW %
                 if "WoW %" in detail.columns:
                     detail["WoW %"] = detail["WoW %"].apply(
                         lambda v: (
@@ -228,6 +308,94 @@ def _event_radar(df: pd.DataFrame) -> None:
                         f"💡 **Señal activa {ev['days_away']}d antes del evento** — "
                         "considera activar contenido SEO, landing pages y paid media ahora."
                     )
+
+                # ── SERP competitive positioning (Ahrefs) ─────────────────────
+                st.markdown("---")
+                st.markdown("**📊 Posicionamiento SERP — adidas vs competidores**")
+                st.caption(
+                    f"Keyword: `{ev['primary_kw']}` · "
+                    f"País: `{ahrefs_country}` · "
+                    f"Fuente: Ahrefs snapshot {_snapshot}"
+                )
+
+                if not api_key:
+                    st.caption(
+                        "💡 Configura `AHREFS_API_KEY` en tus secrets para ver "
+                        "posicionamiento SERP competitivo aquí."
+                    )
+                else:
+                    with st.spinner(f"Cargando SERP «{ev['primary_kw']}»…"):
+                        serp_df = _ahrefs.fetch_serp_positions(
+                            ev["primary_kw"], ahrefs_country, api_key
+                        )
+
+                    if serp_df.empty or "domain" not in serp_df.columns:
+                        st.caption("_Sin datos SERP disponibles para esta keyword._")
+                    else:
+                        _serp = serp_df.copy()
+                        _serp["tracked"] = _serp["domain"].apply(_match_tracked)
+                        _tracked = _serp[_serp["tracked"].notna()].sort_values("position")
+
+                        if _tracked.empty:
+                            st.caption(
+                                "_Ninguna marca rastreada aparece en el top SERP "
+                                "para esta keyword._"
+                            )
+                        else:
+                            _rows = []
+                            for _, _r in _tracked.iterrows():
+                                _td    = _r["tracked"]
+                                _brand = (
+                                    "adidas"
+                                    if _td == adidas_domain
+                                    else _comp_labels.get(_td, _td)
+                                )
+                                _icon  = "⚫" if _td == adidas_domain else "⚪"
+                                _pos   = int(_r["position"]) if pd.notna(_r["position"]) else None
+                                _traf  = (
+                                    f"{int(_r['traffic']):,}"
+                                    if "traffic" in _r.index and pd.notna(_r.get("traffic"))
+                                    else "—"
+                                )
+                                _rows.append({
+                                    "Marca":        f"{_icon} {_brand}",
+                                    "Posición":     _pos if _pos is not None else "—",
+                                    "Tráfico Est.": _traf,
+                                })
+
+                            _serp_display = pd.DataFrame(_rows)
+
+                            # Horizontal bar — lower position = better → invert x axis
+                            _pos_vals = [
+                                r["Posición"] if isinstance(r["Posición"], int) else 0
+                                for r in _rows
+                            ]
+                            _fig = go.Figure(go.Bar(
+                                y=_serp_display["Marca"],
+                                x=_pos_vals,
+                                orientation="h",
+                                marker_color=[
+                                    C_BLACK if "adidas" in str(m) else C_MID
+                                    for m in _serp_display["Marca"]
+                                ],
+                                text=[f"#{v}" if v > 0 else "" for v in _pos_vals],
+                                textposition="outside",
+                            ))
+                            _fig.update_xaxes(
+                                autorange="reversed",
+                                title_text="Posición SERP (menor = mejor)",
+                            )
+                            _fig.update_yaxes(title_text="")
+                            apply_bw(_fig, height=max(160, len(_rows) * 42))
+                            st.plotly_chart(_fig, use_container_width=True)
+                            st.dataframe(_serp_display, use_container_width=True, hide_index=True)
+
+                            if ev["avg_position"] is not None:
+                                st.caption(
+                                    f"📍 Posición media adidas en GSC (datos reales): "
+                                    f"**#{ev['avg_position']:.1f}** · "
+                                    f"Posición Ahrefs (estimada): ver tabla arriba"
+                                )
 
 
 # ── KPI strip ──────────────────────────────────────────────────────────────────
@@ -460,10 +628,10 @@ def _custom_search(df: pd.DataFrame) -> None:
 # ── Main render ────────────────────────────────────────────────────────────────
 
 def render(df: pd.DataFrame) -> None:
-    st.title("Digital Activation — Campaign Signal Intelligence")
+    st.title("📡 SEO Radar — Campaign & Event Intelligence")
     st.caption(
-        "Monitor how commercial campaign keywords perform in organic search. "
-        "Rising impressions = your campaigns are driving search behavior."
+        "Monitorea eventos comerciales y keywords de campaña en búsqueda orgánica. "
+        "GSC real (adidas) + posicionamiento SERP competitivo vía Ahrefs."
     )
 
     if df.empty:
@@ -493,7 +661,7 @@ def render(df: pd.DataFrame) -> None:
     _custom_search(df)
     st.divider()
     render_email_button(
-        "Digital Activation — Campaign Signals",
+        "SEO Radar — Campaign & Event Signals",
         build_activation_context(campaign_df),
         key_suffix="activation",
     )
