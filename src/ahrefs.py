@@ -3,9 +3,9 @@ src/ahrefs.py
 --------------
 Thin REST wrapper for the Ahrefs v3 API (https://api.ahrefs.com/v3/).
 
-All public functions are decorated with @st.cache_data(ttl=86_400) so that
-a page reload re-uses already-fetched data and API credits are only consumed
-once per 24 hours per unique set of parameters.
+All public fetch_* functions are decorated with @st.cache_data(ttl=86_400)
+so that a page reload re-uses already-fetched data and API credits are only
+consumed once per 24 hours per unique set of parameters.
 
 Authentication: Bearer token in the Authorization header.
 Set via Streamlit secrets [ahrefs] api_key  or  AHREFS_API_KEY env var.
@@ -23,6 +23,25 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 _BASE = "https://api.ahrefs.com/v3"
+
+# ── Module-level last-error store (one per Streamlit process) ──────────────────
+# Written by every API call that fails; read by views to surface diagnostics.
+_last_error: str = ""
+
+
+def get_last_error() -> str:
+    return _last_error
+
+
+def _set_error(msg: str) -> None:
+    global _last_error
+    _last_error = msg
+    logger.error("Ahrefs API: %s", msg)
+
+
+def _clear_error() -> None:
+    global _last_error
+    _last_error = ""
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -53,6 +72,41 @@ def _safe_float(val) -> float | None:
         return None
 
 
+# ── Connection test ────────────────────────────────────────────────────────────
+
+def ping(api_key: str) -> tuple[bool, str]:
+    """
+    Make a minimal batch-analysis call (1 domain, 1 field) to verify the
+    API key is valid and the endpoint is reachable.
+
+    Returns (success: bool, message: str).
+    Does NOT use st.cache_data — always hits the API.
+    """
+    if not api_key:
+        return False, "API key vacía."
+
+    try:
+        resp = requests.post(
+            f"{_BASE}/batch-analysis",
+            headers={**_headers(api_key), "Content-Type": "application/json"},
+            json={
+                "targets": [{"url": "adidas.mx", "mode": "subdomains", "protocol": "both"}],
+                "select":  ["domain_rating"],
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            dr = data.get("results", [{}])[0].get("domain_rating")
+            return True, f"✅ Conexión OK — adidas.mx DR = {dr}"
+        else:
+            return False, f"HTTP {resp.status_code}: {resp.text[:400]}"
+    except requests.Timeout:
+        return False, "Timeout — la API tardó más de 15 s."
+    except Exception as e:
+        return False, f"Error de red: {e}"
+
+
 # ── batch-analysis ─────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=86_400, show_spinner=False)
@@ -66,18 +120,18 @@ def fetch_batch_metrics(
     POST /v3/batch-analysis
 
     Compare multiple domains side by side.
-    Returns a DataFrame with columns:
-        label, domain, domain_rating, org_traffic, org_keywords,
-        org_keywords_1_3, org_keywords_4_10, refdomains
+    Columns: label, domain, domain_rating, org_traffic, org_keywords,
+             org_keywords_1_3, org_keywords_4_10, refdomains
     """
     if not api_key:
+        _set_error("API key no configurada.")
         return pd.DataFrame()
 
     targets = [
         {"url": d, "mode": "subdomains", "protocol": "both"}
         for d in domains
     ]
-    payload = {
+    payload: dict = {
         "targets": targets,
         "select": [
             "domain_rating",
@@ -87,8 +141,10 @@ def fetch_batch_metrics(
             "org_keywords_4_10",
             "refdomains",
         ],
-        "country": country,
     }
+    # country filter: only attach if provided (omitting it returns global data)
+    if country:
+        payload["country"] = country
 
     try:
         resp = requests.post(
@@ -97,13 +153,17 @@ def fetch_batch_metrics(
             json=payload,
             timeout=30,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            _set_error(f"HTTP {resp.status_code} — {resp.text[:500]}")
+            return pd.DataFrame()
+
         results = resp.json().get("results", [])
-    except requests.HTTPError as e:
-        logger.error("Ahrefs batch-analysis HTTP %s: %s", e.response.status_code, e.response.text[:300])
+        _clear_error()
+    except requests.Timeout:
+        _set_error("Timeout en batch-analysis (>30 s).")
         return pd.DataFrame()
     except Exception as e:
-        logger.error("Ahrefs batch-analysis error: %s", e)
+        _set_error(f"Error de red en batch-analysis: {e}")
         return pd.DataFrame()
 
     rows = []
@@ -139,6 +199,7 @@ def fetch_organic_competitors(
              keywords_target, traffic, domain_rating, share
     """
     if not api_key:
+        _set_error("API key no configurada.")
         return pd.DataFrame()
 
     try:
@@ -146,25 +207,29 @@ def fetch_organic_competitors(
             f"{_BASE}/site-explorer/organic-competitors",
             headers=_headers(api_key),
             params={
-                "target":     target,
-                "mode":       "subdomains",
-                "protocol":   "both",
-                "country":    country,
-                "date":       snapshot_date(),
-                "select":     "competitor_domain,keywords_common,keywords_competitor,keywords_target,traffic,domain_rating,share",
-                "order_by":   "keywords_common:desc",
-                "limit":      limit,
-                "output":     "json",
+                "target":   target,
+                "mode":     "subdomains",
+                "protocol": "both",
+                "country":  country,
+                "date":     snapshot_date(),
+                "select":   "competitor_domain,keywords_common,keywords_competitor,keywords_target,traffic,domain_rating,share",
+                "order_by": "keywords_common:desc",
+                "limit":    limit,
+                "output":   "json",
             },
             timeout=30,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            _set_error(f"HTTP {resp.status_code} — {resp.text[:500]}")
+            return pd.DataFrame()
+
         data = resp.json().get("competitors", [])
-    except requests.HTTPError as e:
-        logger.error("Ahrefs organic-competitors HTTP %s: %s", e.response.status_code, e.response.text[:300])
+        _clear_error()
+    except requests.Timeout:
+        _set_error("Timeout en organic-competitors (>30 s).")
         return pd.DataFrame()
     except Exception as e:
-        logger.error("Ahrefs organic-competitors error: %s", e)
+        _set_error(f"Error en organic-competitors: {e}")
         return pd.DataFrame()
 
     if not data:
@@ -195,10 +260,11 @@ def fetch_top_organic_keywords(
     """
     GET /v3/site-explorer/organic-keywords
 
-    Returns top organic keywords for a domain, useful for competitor gap analysis.
+    Returns top organic keywords for a domain — used for competitor gap analysis.
     Columns: keyword, volume, keyword_difficulty, best_position, sum_traffic
     """
     if not api_key:
+        _set_error("API key no configurada.")
         return pd.DataFrame()
 
     where_filter = (
@@ -224,13 +290,17 @@ def fetch_top_organic_keywords(
             },
             timeout=30,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            _set_error(f"HTTP {resp.status_code} — {resp.text[:500]}")
+            return pd.DataFrame()
+
         data = resp.json().get("keywords", [])
-    except requests.HTTPError as e:
-        logger.error("Ahrefs organic-keywords HTTP %s: %s", e.response.status_code, e.response.text[:300])
+        _clear_error()
+    except requests.Timeout:
+        _set_error("Timeout en organic-keywords (>30 s).")
         return pd.DataFrame()
     except Exception as e:
-        logger.error("Ahrefs organic-keywords error: %s", e)
+        _set_error(f"Error en organic-keywords: {e}")
         return pd.DataFrame()
 
     if not data:
@@ -253,9 +323,8 @@ def fetch_domain_metrics(
     api_key: str,
 ) -> dict | None:
     """
-    GET /v3/site-explorer/metrics
-
-    Single-domain snapshot: DR, org_traffic, org_keywords, refdomains.
+    GET /v3/site-explorer/metrics — single-domain snapshot.
+    Fields: org_keywords, org_traffic, domain_rating, refdomains.
     """
     if not api_key:
         return None
@@ -275,8 +344,11 @@ def fetch_domain_metrics(
             },
             timeout=15,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            _set_error(f"HTTP {resp.status_code} — {resp.text[:500]}")
+            return None
+        _clear_error()
         return resp.json().get("metrics")
     except Exception as e:
-        logger.error("Ahrefs metrics error for %s: %s", target, e)
+        _set_error(f"Error en domain metrics: {e}")
         return None
