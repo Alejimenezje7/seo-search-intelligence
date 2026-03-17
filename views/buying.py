@@ -25,6 +25,7 @@ from src.filters import (
 )
 from src.insights import build_buying_context, get_buying_insights, render_email_button
 from src.processor import (
+    classify_search_signal,
     compute_wow,
     compute_mom,
     compute_wow_by_category,
@@ -151,8 +152,60 @@ def _ones_to_watch(
         kw_cat = df[["keyword", "product_category"]].drop_duplicates("keyword")
         gainers = gainers.merge(kw_cat, on="keyword", how="left")
 
+    # ── Classify each keyword: SEO-driven vs external Trend ───────────────────
+    gainers["Signal"] = gainers.apply(
+        lambda r: classify_search_signal(
+            r["keyword"],
+            r.get("impressions_prev", 0),
+            r.get("impressions_pct", 0),
+        ),
+        axis=1,
+    )
+
+    # ── Signal filter ─────────────────────────────────────────────────────────
+    col_filter, col_legend = st.columns([2, 3])
+    with col_filter:
+        signal_filter = st.radio(
+            "Filtrar por señal:",
+            ["Todos", "🔍 SEO", "📈 Tendencia"],
+            horizontal=True,
+            key="buy_signal_filter",
+        )
+    with col_legend:
+        st.markdown(
+            "<div style='padding-top:6px; font-size:0.78rem; color:#666;'>"
+            "<b>🔍 SEO</b> — crecimiento atribuible al trabajo de posicionamiento de adidas &nbsp;|&nbsp; "
+            "<b>📈 Tendencia</b> — demanda impulsada por eventos externos, equipos o estacionalidad"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    if signal_filter != "Todos":
+        gainers = gainers[gainers["Signal"] == signal_filter]
+
+    if gainers.empty:
+        st.info(f"No hay keywords con señal '{signal_filter}' en este período.")
+        return
+
+    # ── Summary badges ────────────────────────────────────────────────────────
+    n_seo   = int((gainers["Signal"] == "🔍 SEO").sum())
+    n_trend = int((gainers["Signal"] == "📈 Tendencia").sum())
+    st.markdown(
+        f"<span style='background:#e8f5e9;color:#1a7a1a;padding:3px 10px;"
+        f"border-radius:12px;font-size:0.78rem;font-weight:600;margin-right:6px;'>"
+        f"🔍 SEO: {n_seo}</span>"
+        f"<span style='background:#e3f0ff;color:#0055aa;padding:3px 10px;"
+        f"border-radius:12px;font-size:0.78rem;font-weight:600;'>"
+        f"📈 Tendencia: {n_trend}</span>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(" ")
+
+    # ── Build display table ────────────────────────────────────────────────────
     extra = ["product_category"] if "product_category" in gainers.columns else []
-    disp_cols = ["keyword"] + extra + ["impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"]
+    disp_cols = ["keyword", "Signal"] + extra + [
+        "impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"
+    ]
     disp_cols = [c for c in disp_cols if c in gainers.columns]
     display = gainers[disp_cols].copy()
     display["impressions_prev"]  = display["impressions_prev"].apply(fmt_int)
@@ -161,6 +214,7 @@ def _ones_to_watch(
     display["impressions_pct"]   = display["impressions_pct"].apply(fmt_pct)
     display = display.rename(columns={
         "keyword":           "Keyword",
+        "Signal":            "Señal",
         "product_category":  "Category",
         "impressions_prev":  "Prev Period",
         "impressions_curr":  "This Period",
@@ -178,7 +232,11 @@ def _cooling_demand(
     period_label: str,
     compute_fn,
 ) -> None:
-    st.caption(f"Non-brand keywords losing search traction ({period_label}) — review inventory exposure.")
+    st.caption(
+        f"Non-brand keywords losing search traction ({period_label}). "
+        "🔍 SEO drops = posible pérdida de posicionamiento — acción urgente. "
+        "📈 Tendencia drops = ciclo del trend terminando — ajustar inventario."
+    )
 
     nb = df[df["brand_type"] == "Non-Brand"]
     if nb.empty:
@@ -201,8 +259,20 @@ def _cooling_demand(
         kw_cat = df[["keyword", "product_category"]].drop_duplicates("keyword")
         decliners = decliners.merge(kw_cat, on="keyword", how="left")
 
+    # ── Classify signal for decliners ─────────────────────────────────────────
+    decliners["Signal"] = decliners.apply(
+        lambda r: classify_search_signal(
+            r["keyword"],
+            r.get("impressions_prev", 0),
+            r.get("impressions_pct", 0),
+        ),
+        axis=1,
+    )
+
     extra = ["product_category"] if "product_category" in decliners.columns else []
-    disp_cols = ["keyword"] + extra + ["impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"]
+    disp_cols = ["keyword", "Signal"] + extra + [
+        "impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"
+    ]
     disp_cols = [c for c in disp_cols if c in decliners.columns]
     display = decliners[disp_cols].copy()
     display["impressions_prev"]  = display["impressions_prev"].apply(fmt_int)
@@ -211,6 +281,7 @@ def _cooling_demand(
     display["impressions_pct"]   = display["impressions_pct"].apply(fmt_pct)
     display = display.rename(columns={
         "keyword":           "Keyword",
+        "Signal":            "Señal",
         "product_category":  "Category",
         "impressions_prev":  "Prev Period",
         "impressions_curr":  "This Period",
