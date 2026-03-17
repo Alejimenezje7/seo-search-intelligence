@@ -55,6 +55,24 @@ def _api_key_guard() -> str | None:
     return None
 
 
+def _show_api_error() -> None:
+    """Display the last Ahrefs API error with a debug expander."""
+    err = ah.get_last_error()
+    with st.expander("🔎 Diagnóstico de API — ver detalle del error"):
+        if err:
+            st.error(err)
+        else:
+            st.info("No se guardó detalle del error. Revisa los logs del servidor.")
+        st.markdown(
+            "**Pasos para resolver:**\n"
+            "1. Verifica que tu API key sea válida en [app.ahrefs.com](https://app.ahrefs.com/user/api-keys)\n"
+            "2. Usa el botón **🔌 Test de Conexión** en el panel de configuración\n"
+            "3. Asegúrate de que tu plan incluya acceso a **Batch Analysis** y **Site Explorer**\n"
+            "4. Si ves `HTTP 422`, puede haber un campo no soportado en tu plan\n"
+            "5. Si ves `HTTP 401/403`, la key es inválida o expiró"
+        )
+
+
 # ── Market selector ────────────────────────────────────────────────────────────
 
 def _market_selector(key: str = "comp_market") -> tuple[str, str, str] | None:
@@ -123,10 +141,8 @@ def _tab_benchmark(api_key: str) -> None:
         )
 
     if df.empty:
-        st.error(
-            "No se obtuvieron datos. Verifica que tu API key tenga permisos para "
-            "**Site Explorer** y que los dominios sean correctos."
-        )
+        st.error("No se obtuvieron datos de Ahrefs.")
+        _show_api_error()
         return
 
     # ── KPI strip — adidas vs best competitor ─────────────────────────────────
@@ -297,10 +313,8 @@ def _tab_competencia(api_key: str) -> None:
         )
 
     if df.empty:
-        st.info(
-            f"No se encontraron competidores orgánicos para **{adidas_domain}** "
-            f"en **{market_label}**. Verifica que la fecha de snapshot esté disponible."
-        )
+        st.error("No se obtuvieron datos de competidores.")
+        _show_api_error()
         return
 
     # ── KPI strip ─────────────────────────────────────────────────────────────
@@ -595,6 +609,27 @@ def render(df: pd.DataFrame) -> None:
     api_key = _api_key_guard()
     if not api_key:
         return
+
+    # ── Connection test panel ─────────────────────────────────────────────────
+    with st.expander("🔌 Test de Conexión Ahrefs"):
+        st.caption(
+            "Hace una llamada mínima a la API para confirmar que la key funciona. "
+            "Consume ~1 crédito."
+        )
+        if st.button("Probar conexión", key="ahrefs_ping"):
+            with st.spinner("Conectando…"):
+                ok, msg = ah.ping(api_key)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+                st.markdown(
+                    "**Posibles causas:**\n"
+                    "- API key incorrecta o expirada\n"
+                    "- Plan sin acceso a Batch Analysis\n"
+                    "- Límite de créditos alcanzado\n\n"
+                    "Verifica en [app.ahrefs.com/user/api-keys](https://app.ahrefs.com/user/api-keys)"
+                )
 
     tab1, tab2, tab3 = st.tabs([
         "🏆 Benchmark SEO",
