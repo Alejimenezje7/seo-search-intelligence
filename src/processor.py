@@ -10,11 +10,96 @@ Core design principles:
   - All outputs are flat DataFrames ready to be consumed by the view layer.
 """
 
+import re
+
 import pandas as pd
 import numpy as np
 from datetime import date, timedelta
 
 from config import MIN_CLICKS_THRESHOLD, MIN_IMPRESSIONS_THRESHOLD
+
+
+# ── Search Signal Classifier ───────────────────────────────────────────────────
+# Distinguishes growth driven by adidas's own SEO work vs external market
+# trends / events that would happen regardless of SEO.
+#
+# Signal labels:
+#   "🔍 SEO"        – growth likely attributable to adidas's SEO optimization
+#   "📈 Tendencia"  – growth driven by external events, trends or seasonality
+
+_TREND_PATTERNS: list[str] = [
+    # ── World Cup / Copa events ──────────────────────────────────────────────
+    r"\bcopa\b", r"\bmundial\b", r"\bworld.?cup\b",
+    r"\bsel[eé]c[c]?i?[oó]n\b",          # selección / seleccion
+    r"\bsele[çc][aã]o\b",                  # seleção / selecao (PT)
+    r"\beurocopa\b", r"\beurocup\b",
+    r"\bolímpic\b", r"\bolimpic\b", r"\bolimpiada\b",
+    r"\b202[5-9]\b",                        # year references (future events)
+    # ── Brazilian clubs ──────────────────────────────────────────────────────
+    r"\bcruzeiro\b", r"\bflamengo\b", r"\bfluminense\b",
+    r"\bcorinthians\b", r"\bpalmeiras\b", r"\bsantos\b",
+    r"\batl[eé]tico\b", r"\bgr[eê]mio\b", r"\bvasco\b",
+    r"\bfortaleza\b", r"\bceará\b", r"\bsport\b",
+    # ── Argentine clubs ──────────────────────────────────────────────────────
+    r"\bboca\b", r"\briver\b", r"\bhurrac[aá]n\b",
+    r"\bindepend[ie]nte\b", r"\bracing\b", r"\bsanlorenzo\b",
+    # ── Chilean clubs ────────────────────────────────────────────────────────
+    r"\bcolo.?colo\b", r"\bu.?de.?chile\b", r"\bla.?u\b",
+    # ── Mexican clubs ────────────────────────────────────────────────────────
+    r"\bchivas\b", r"\bpumas\b", r"\bcruz.?azul\b",
+    r"\btoluca\b", r"\btigres\b", r"\bmonte?rrey\b",
+    # ── Colombian clubs ──────────────────────────────────────────────────────
+    r"\bmillonar\b", r"\bnacional\b", r"\bamerica.?cali\b",
+    r"\bonce.?caldas\b", r"\bdeportivo.?cali\b",
+    # ── National team + shirt patterns ──────────────────────────────────────
+    r"brasil.{0,6}camis", r"camis.{0,6}brasil",
+    r"mexico.{0,6}camis", r"camis.{0,6}mexico",
+    r"argentin.{0,6}camis", r"camis.{0,6}argentin",
+    r"colombia.{0,6}camis", r"camis.{0,6}colombia",
+    # ── Seasonal / commercial events ─────────────────────────────────────────
+    r"\bnavidad\b", r"\bblack.?friday\b", r"\bcyber\b",
+    r"\bdia.?de.?la.?madre\b", r"\bdia.?del.?padre\b",
+    r"\bhotsale\b", r"\bbuen.?fin\b",
+]
+
+
+def classify_search_signal(
+    keyword: str,
+    impressions_prev: float = 0,
+    impressions_pct: float = 0,
+) -> str:
+    """
+    Classify a keyword's growth driver as SEO-attributable or trend-driven.
+
+    Decision logic (in priority order):
+      1. Keyword matches a known trend pattern (team, event, season) → Tendencia
+      2. Keyword was absent in the previous period (prev == 0) → Tendencia
+      3. Hyper-explosive growth > 500 % from a non-trivial base (≥ 100 impr) → Tendencia
+      4. Everything else → SEO (steady growth from established rankings)
+
+    Returns:
+        "🔍 SEO"        – likely driven by adidas's SEO & content work
+        "📈 Tendencia"  – likely driven by external market events or seasonality
+    """
+    kw   = str(keyword).lower().strip()
+    prev = float(impressions_prev or 0)
+    pct  = float(impressions_pct  or 0)
+
+    # 1. Pattern match (strongest signal — context-free)
+    for pattern in _TREND_PATTERNS:
+        if re.search(pattern, kw):
+            return "📈 Tendencia"
+
+    # 2. Brand-new keyword this period
+    if prev == 0:
+        return "📈 Tendencia"
+
+    # 3. Hyper-explosive growth from an established base
+    if pct > 500 and prev >= 100:
+        return "📈 Tendencia"
+
+    # 4. Default: attribute to SEO
+    return "🔍 SEO"
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
