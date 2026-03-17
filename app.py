@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
 
 from config import ACCESS_PASSWORD, APP_ICON, APP_TITLE, CREDENTIALS_DICT, CREDENTIALS_FILE
 from src import cache
-from views import activation, buying, explorer, mtd, opportunities, overview, weekly
+from views import activation, buying, competitors, explorer, mtd, opportunities, overview, weekly
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -426,6 +426,7 @@ def render_sidebar() -> str:
                 "🎯  Digital Activation",
                 "🔍  Keyword Explorer",
                 "💡  Oportunidades SEO",
+                "⚔️  Competitor Intelligence",
             ],
             label_visibility="collapsed",
         )
@@ -497,6 +498,8 @@ def main():
         explorer.render(df)
     elif page == "Oportunidades SEO":
         opportunities.render(df)
+    elif page == "Competitor Intelligence":
+        competitors.render(df)
 
 
 if __name__ == "__main__":

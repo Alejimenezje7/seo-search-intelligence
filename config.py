@@ -95,6 +95,45 @@ try:
 except BaseException:
     pass  # Not running in Streamlit, or secret absent — env var fallback used
 
+# ── Ahrefs API ────────────────────────────────────────────────────────────────
+# Priority: Streamlit Cloud secrets [ahrefs] section > AHREFS_API_KEY env var.
+# To enable on Streamlit Cloud add to secrets:
+#   [ahrefs]
+#   api_key = "your-ahrefs-api-key-here"
+AHREFS_API_KEY: str | None = os.getenv("AHREFS_API_KEY")
+
+try:
+    import streamlit as _st_ah
+    if hasattr(_st_ah, "secrets") and "ahrefs" in _st_ah.secrets:
+        _key = str(_st_ah.secrets["ahrefs"].get("api_key", "")).strip()
+        if _key:
+            AHREFS_API_KEY = _key
+except BaseException:
+    pass  # Not running in Streamlit, or secret absent — env var fallback used
+
+# ── Ahrefs Markets — adidas domain + ISO country code per LatAm market ─────────
+# Used by views/competitors.py to map each GSC market to Ahrefs-compatible params.
+AHREFS_MARKETS: dict[str, dict] = {
+    "Mexico":     {"domain": "adidas.mx",      "country": "MX"},
+    "Colombia":   {"domain": "adidas.co",       "country": "CO"},
+    "Peru":       {"domain": "adidas.pe",       "country": "PE"},
+    "Chile":      {"domain": "adidas.cl",       "country": "CL"},
+    "Argentina":  {"domain": "adidas.com.ar",   "country": "AR"},
+    "Brazil":     {"domain": "adidas.com.br",   "country": "BR"},
+    "Costa Rica": {"domain": "adidas.com",      "country": "CR"},
+    "Ecuador":    {"domain": "adidas.com",      "country": "EC"},
+}
+
+# ── Competitor domains tracked in all LatAm markets ───────────────────────────
+# Uses global domains; Ahrefs filters traffic/keywords by country automatically.
+AHREFS_COMPETITORS: list[dict] = [
+    {"domain": "nike.com",        "label": "Nike",          "color": "#E11B22"},
+    {"domain": "puma.com",        "label": "Puma",          "color": "#0F3C78"},
+    {"domain": "newbalance.com",  "label": "New Balance",   "color": "#DF1F26"},
+    {"domain": "reebok.com",      "label": "Reebok",        "color": "#CC0000"},
+    {"domain": "underarmour.com", "label": "Under Armour",  "color": "#1D1D1D"},
+]
+
 # ── Domains ────────────────────────────────────────────────────────────────────
 # Add or remove domains here as your portfolio grows.
 DOMAINS = [
