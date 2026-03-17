@@ -48,7 +48,7 @@ try:
                 _creds["private_key"] = _creds["private_key"].replace("\\n", "\n")
             CREDENTIALS_DICT = _creds
 
-except Exception:
+except BaseException:
     pass  # Not running inside Streamlit, or secret is missing — use file path instead
 
 OAUTH_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
@@ -57,8 +57,11 @@ OAUTH_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 # Protects the entire app with a password gate shown before any data renders.
 # If not set, the app is accessible to anyone (use only in trusted environments).
 #
+# NOTE: We use [access] (not [auth]) because [auth] is reserved by Streamlit 1.35+
+# for its native OAuth/OIDC authentication system and will cause startup errors.
+#
 # To enable on Streamlit Cloud, add to your secrets:
-#   [auth]
+#   [access]
 #   password = "your-strong-password-here"
 #
 # To enable locally, set the env var:
@@ -68,12 +71,12 @@ ACCESS_PASSWORD: str | None = os.getenv("APP_ACCESS_PASSWORD")
 
 try:
     import streamlit as _st_pw
-    if hasattr(_st_pw, "secrets") and "auth" in _st_pw.secrets:
-        _pwd = str(_st_pw.secrets["auth"].get("password", "")).strip()
+    if hasattr(_st_pw, "secrets") and "access" in _st_pw.secrets:
+        _pwd = str(_st_pw.secrets["access"].get("password", "")).strip()
         if _pwd:
             ACCESS_PASSWORD = _pwd
-except Exception:
-    pass  # Not in Streamlit runtime, or secret absent
+except BaseException:
+    pass  # Not in Streamlit runtime, secret absent, or Streamlit middleware raised
 
 
 # ── AI Insights (Anthropic Claude API) ────────────────────────────────────────
@@ -89,7 +92,7 @@ try:
         _key = str(_st_ai.secrets["ai"].get("anthropic_api_key", "")).strip()
         if _key:
             ANTHROPIC_API_KEY = _key
-except Exception:
+except BaseException:
     pass  # Not running in Streamlit, or secret absent — env var fallback used
 
 # ── Domains ────────────────────────────────────────────────────────────────────
