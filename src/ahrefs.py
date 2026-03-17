@@ -76,29 +76,32 @@ def _safe_float(val) -> float | None:
 
 def ping(api_key: str) -> tuple[bool, str]:
     """
-    Make a minimal batch-analysis call (1 domain, 1 field) to verify the
-    API key is valid and the endpoint is reachable.
-
-    Returns (success: bool, message: str).
-    Does NOT use st.cache_data — always hits the API.
+    Make a minimal site-explorer/metrics call to verify the API key is valid
+    and the endpoint is reachable.  Returns (success: bool, message: str).
+    Does NOT use st.cache_data — always hits the API live.
     """
     if not api_key:
         return False, "API key vacía."
 
     try:
-        resp = requests.post(
-            f"{_BASE}/batch-analysis",
-            headers={**_headers(api_key), "Content-Type": "application/json"},
-            json={
-                "targets": [{"url": "adidas.mx", "mode": "subdomains", "protocol": "both"}],
-                "select":  ["domain_rating"],
+        resp = requests.get(
+            f"{_BASE}/site-explorer/metrics",
+            headers=_headers(api_key),
+            params={
+                "target":   "adidas.mx",
+                "mode":     "subdomains",
+                "protocol": "both",
+                "date":     snapshot_date(),
+                "select":   "domain_rating,org_traffic",
+                "output":   "json",
             },
             timeout=15,
         )
         if resp.status_code == 200:
-            data = resp.json()
-            dr = data.get("results", [{}])[0].get("domain_rating")
-            return True, f"✅ Conexión OK — adidas.mx DR = {dr}"
+            m = resp.json().get("metrics", {}) or {}
+            dr = m.get("domain_rating", "—")
+            tr = m.get("org_traffic", "—")
+            return True, f"✅ Conexión OK — adidas.mx DR={dr}, tráfico est.={tr:,}" if isinstance(tr, int) else f"✅ Conexión OK — adidas.mx DR={dr}"
         else:
             return False, f"HTTP {resp.status_code}: {resp.text[:400]}"
     except requests.Timeout:
@@ -107,9 +110,58 @@ def ping(api_key: str) -> tuple[bool, str]:
         return False, f"Error de red: {e}"
 
 
-# ── batch-analysis ─────────────────────────────────────────────────────────────
+# ── site-explorer / metrics (single domain) ────────────────────────────────────
+# NOTE: /v3/batch-analysis returns 404 on non-Enterprise plans.
+# We replace it with individual site-explorer/metrics calls, one per domain,
+# each cached independently. Same data, fully compatible.
+
+_SE_METRICS_SELECT = (
+    "domain_rating,org_traffic,org_keywords,"
+    "org_keywords_1_3,org_keywords_4_10,refdomains"
+)
+
 
 @st.cache_data(ttl=86_400, show_spinner=False)
+def _fetch_single_metrics(
+    domain: str,
+    country: str,
+    api_key: str,
+) -> dict:
+    """
+    GET /v3/site-explorer/metrics for one domain.
+    Cached per (domain, country) — safe to call in a loop.
+    """
+    params: dict = {
+        "target":   domain,
+        "mode":     "subdomains",
+        "protocol": "both",
+        "date":     snapshot_date(),
+        "select":   _SE_METRICS_SELECT,
+        "output":   "json",
+    }
+    if country:
+        params["country"] = country
+
+    try:
+        resp = requests.get(
+            f"{_BASE}/site-explorer/metrics",
+            headers=_headers(api_key),
+            params=params,
+            timeout=20,
+        )
+        if not resp.ok:
+            _set_error(f"HTTP {resp.status_code} for {domain} — {resp.text[:400]}")
+            return {}
+        _clear_error()
+        return resp.json().get("metrics", {}) or {}
+    except requests.Timeout:
+        _set_error(f"Timeout fetching metrics for {domain}.")
+        return {}
+    except Exception as e:
+        _set_error(f"Error fetching metrics for {domain}: {e}")
+        return {}
+
+
 def fetch_batch_metrics(
     domains: tuple[str, ...],
     labels: tuple[str, ...],
@@ -117,9 +169,12 @@ def fetch_batch_metrics(
     api_key: str,
 ) -> pd.DataFrame:
     """
-    POST /v3/batch-analysis
+    Compare multiple domains side by side via site-explorer/metrics.
 
-    Compare multiple domains side by side.
+    Replaces the /v3/batch-analysis endpoint (which requires Enterprise plan).
+    Each domain is fetched with its own @st.cache_data call so results are
+    cached individually — subsequent loads hit 0 API endpoints.
+
     Columns: label, domain, domain_rating, org_traffic, org_keywords,
              org_keywords_1_3, org_keywords_4_10, refdomains
     """
@@ -127,59 +182,26 @@ def fetch_batch_metrics(
         _set_error("API key no configurada.")
         return pd.DataFrame()
 
-    targets = [
-        {"url": d, "mode": "subdomains", "protocol": "both"}
-        for d in domains
-    ]
-    payload: dict = {
-        "targets": targets,
-        "select": [
-            "domain_rating",
-            "org_traffic",
-            "org_keywords",
-            "org_keywords_1_3",
-            "org_keywords_4_10",
-            "refdomains",
-        ],
-    }
-    # country filter: only attach if provided (omitting it returns global data)
-    if country:
-        payload["country"] = country
-
-    try:
-        resp = requests.post(
-            f"{_BASE}/batch-analysis",
-            headers={**_headers(api_key), "Content-Type": "application/json"},
-            json=payload,
-            timeout=30,
-        )
-        if not resp.ok:
-            _set_error(f"HTTP {resp.status_code} — {resp.text[:500]}")
-            return pd.DataFrame()
-
-        results = resp.json().get("results", [])
-        _clear_error()
-    except requests.Timeout:
-        _set_error("Timeout en batch-analysis (>30 s).")
-        return pd.DataFrame()
-    except Exception as e:
-        _set_error(f"Error de red en batch-analysis: {e}")
-        return pd.DataFrame()
-
     rows = []
-    for i, row in enumerate(results):
+    for i, domain in enumerate(domains):
+        m = _fetch_single_metrics(domain, country, api_key)
         rows.append({
-            "label":             labels[i] if i < len(labels) else domains[i],
-            "domain":            domains[i],
-            "domain_rating":     _safe_float(row.get("domain_rating")),
-            "org_traffic":       _safe_int(row.get("org_traffic")),
-            "org_keywords":      _safe_int(row.get("org_keywords")),
-            "org_keywords_1_3":  _safe_int(row.get("org_keywords_1_3")),
-            "org_keywords_4_10": _safe_int(row.get("org_keywords_4_10")),
-            "refdomains":        _safe_int(row.get("refdomains")),
+            "label":             labels[i] if i < len(labels) else domain,
+            "domain":            domain,
+            "domain_rating":     _safe_float(m.get("domain_rating")),
+            "org_traffic":       _safe_int(m.get("org_traffic")),
+            "org_keywords":      _safe_int(m.get("org_keywords")),
+            "org_keywords_1_3":  _safe_int(m.get("org_keywords_1_3")),
+            "org_keywords_4_10": _safe_int(m.get("org_keywords_4_10")),
+            "refdomains":        _safe_int(m.get("refdomains")),
         })
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # Return empty if every metric is null (all API calls failed)
+    metric_cols = ["domain_rating", "org_traffic", "org_keywords", "refdomains"]
+    if df[metric_cols].isnull().all().all():
+        return pd.DataFrame()
+    return df
 
 
 # ── site-explorer / organic-competitors ───────────────────────────────────────
