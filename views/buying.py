@@ -152,7 +152,7 @@ def _ones_to_watch(
         kw_cat = df[["keyword", "product_category"]].drop_duplicates("keyword")
         gainers = gainers.merge(kw_cat, on="keyword", how="left")
 
-    # ── Classify each keyword: SEO-driven vs external Trend ───────────────────
+    # ── SEO vs Tendencia signal ───────────────────────────────────────────────
     gainers["Signal"] = gainers.apply(
         lambda r: classify_search_signal(
             r["keyword"],
@@ -162,7 +162,7 @@ def _ones_to_watch(
         axis=1,
     )
 
-    # ── Signal filter ─────────────────────────────────────────────────────────
+    # Signal filter + legend
     col_filter, col_legend = st.columns([2, 3])
     with col_filter:
         signal_filter = st.radio(
@@ -172,40 +172,30 @@ def _ones_to_watch(
             key="buy_signal_filter",
         )
     with col_legend:
-        st.markdown(
-            "<div style='padding-top:6px; font-size:0.78rem; color:#666;'>"
-            "<b>🔍 SEO</b> — crecimiento atribuible al trabajo de posicionamiento de adidas &nbsp;|&nbsp; "
-            "<b>📈 Tendencia</b> — demanda impulsada por eventos externos, equipos o estacionalidad"
-            "</div>",
-            unsafe_allow_html=True,
+        st.caption(
+            "🔍 **SEO** — crecimiento atribuible a visibilidad orgánica / trabajo SEO · "
+            "📈 **Tendencia** — pico de demanda impulsado por eventos, moda o temporalidad"
         )
 
+    # Apply filter
     if signal_filter != "Todos":
         gainers = gainers[gainers["Signal"] == signal_filter]
-
     if gainers.empty:
-        st.info(f"No hay keywords con señal '{signal_filter}' en este período.")
+        st.info(f"No hay keywords con señal **{signal_filter}** este período.")
         return
 
-    # ── Summary badges ────────────────────────────────────────────────────────
-    n_seo   = int((gainers["Signal"] == "🔍 SEO").sum())
-    n_trend = int((gainers["Signal"] == "📈 Tendencia").sum())
+    # Badge strip
+    n_seo  = int((gainers["Signal"] == "🔍 SEO").sum())
+    n_tend = int((gainers["Signal"] == "📈 Tendencia").sum())
     st.markdown(
-        f"<span style='background:#e8f5e9;color:#1a7a1a;padding:3px 10px;"
-        f"border-radius:12px;font-size:0.78rem;font-weight:600;margin-right:6px;'>"
-        f"🔍 SEO: {n_seo}</span>"
-        f"<span style='background:#e3f0ff;color:#0055aa;padding:3px 10px;"
-        f"border-radius:12px;font-size:0.78rem;font-weight:600;'>"
-        f"📈 Tendencia: {n_trend}</span>",
+        f"<span style='background:#111;color:#fff;padding:2px 8px;border-radius:4px;font-size:0.8em;'>🔍 SEO: {n_seo}</span>&nbsp;&nbsp;"
+        f"<span style='background:#1a7a1a;color:#fff;padding:2px 8px;border-radius:4px;font-size:0.8em;'>📈 Tendencia: {n_tend}</span>",
         unsafe_allow_html=True,
     )
-    st.markdown(" ")
+    st.write("")
 
-    # ── Build display table ────────────────────────────────────────────────────
     extra = ["product_category"] if "product_category" in gainers.columns else []
-    disp_cols = ["keyword", "Signal"] + extra + [
-        "impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"
-    ]
+    disp_cols = ["keyword", "Signal"] + extra + ["impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"]
     disp_cols = [c for c in disp_cols if c in gainers.columns]
     display = gainers[disp_cols].copy()
     display["impressions_prev"]  = display["impressions_prev"].apply(fmt_int)
@@ -233,9 +223,9 @@ def _cooling_demand(
     compute_fn,
 ) -> None:
     st.caption(
-        f"Non-brand keywords losing search traction ({period_label}). "
-        "🔍 SEO drops = posible pérdida de posicionamiento — acción urgente. "
-        "📈 Tendencia drops = ciclo del trend terminando — ajustar inventario."
+        f"Non-brand keywords losing search traction ({period_label}) — "
+        "🔍 **SEO** drop = possible ranking loss, review page optimisation · "
+        "📈 **Tendencia** drop = trend cycle ending, adjust inventory exposure."
     )
 
     nb = df[df["brand_type"] == "Non-Brand"]
@@ -259,7 +249,7 @@ def _cooling_demand(
         kw_cat = df[["keyword", "product_category"]].drop_duplicates("keyword")
         decliners = decliners.merge(kw_cat, on="keyword", how="left")
 
-    # ── Classify signal for decliners ─────────────────────────────────────────
+    # ── SEO vs Tendencia signal ───────────────────────────────────────────────
     decliners["Signal"] = decliners.apply(
         lambda r: classify_search_signal(
             r["keyword"],
@@ -270,9 +260,7 @@ def _cooling_demand(
     )
 
     extra = ["product_category"] if "product_category" in decliners.columns else []
-    disp_cols = ["keyword", "Signal"] + extra + [
-        "impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"
-    ]
+    disp_cols = ["keyword", "Signal"] + extra + ["impressions_prev", "impressions_curr", "impressions_delta", "impressions_pct"]
     disp_cols = [c for c in disp_cols if c in decliners.columns]
     display = decliners[disp_cols].copy()
     display["impressions_prev"]  = display["impressions_prev"].apply(fmt_int)
@@ -405,11 +393,21 @@ def _buying_ai_section(cat_wow: pd.DataFrame, df: pd.DataFrame, period_label: st
 # ── Main render ────────────────────────────────────────────────────────────────
 
 def render(df: pd.DataFrame) -> None:
-    st.title("Buying & Trading — Demand Intelligence")
-    st.caption(
-        "Organic search as a leading indicator of consumer demand. "
-        "Rising impressions signal growing product interest before purchase."
-    )
+    # Read mode from session_state so the title is correct on first render too
+    _saved_mode = st.session_state.get("buy_period_mode", "📅 WoW — semana vs semana")
+    _is_mom_early = str(_saved_mode).startswith("📆")
+
+    if _is_mom_early:
+        st.title("Buying & Trading — Month-over-Month Demand Intelligence")
+        st.caption(
+            "Organic search demand trend — month-over-month comparison of the last two complete months."
+        )
+    else:
+        st.title("Buying & Trading — Week-over-Week Demand Intelligence")
+        st.caption(
+            "Organic search as a leading indicator of consumer demand — week-over-week view. "
+            "Rising impressions signal growing product interest before purchase."
+        )
 
     if df.empty:
         st.warning("No data loaded. Click **⚡ Quick** or **🔄 Full** in the sidebar.")
