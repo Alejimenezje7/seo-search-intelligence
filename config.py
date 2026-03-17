@@ -53,6 +53,29 @@ except Exception:
 
 OAUTH_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 
+# ── App Access Password ────────────────────────────────────────────────────────
+# Protects the entire app with a password gate shown before any data renders.
+# If not set, the app is accessible to anyone (use only in trusted environments).
+#
+# To enable on Streamlit Cloud, add to your secrets:
+#   [auth]
+#   password = "your-strong-password-here"
+#
+# To enable locally, set the env var:
+#   APP_ACCESS_PASSWORD=your-password streamlit run app.py
+
+ACCESS_PASSWORD: str | None = os.getenv("APP_ACCESS_PASSWORD")
+
+try:
+    import streamlit as _st_pw
+    if hasattr(_st_pw, "secrets") and "auth" in _st_pw.secrets:
+        _pwd = str(_st_pw.secrets["auth"].get("password", "")).strip()
+        if _pwd:
+            ACCESS_PASSWORD = _pwd
+except Exception:
+    pass  # Not in Streamlit runtime, or secret absent
+
+
 # ── AI Insights (Anthropic Claude API) ────────────────────────────────────────
 # Priority: Streamlit Cloud secrets [ai] section > ANTHROPIC_API_KEY env var.
 # To enable on Streamlit Cloud add to secrets:

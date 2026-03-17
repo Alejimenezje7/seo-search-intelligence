@@ -26,7 +26,7 @@ ROOT = Path(__file__).parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import APP_ICON, APP_TITLE, CREDENTIALS_DICT, CREDENTIALS_FILE
+from config import ACCESS_PASSWORD, APP_ICON, APP_TITLE, CREDENTIALS_DICT, CREDENTIALS_FILE
 from src import cache
 from views import activation, buying, explorer, mtd, overview, weekly
 
@@ -47,6 +47,77 @@ if "df" not in st.session_state:
 
 if "last_refresh" not in st.session_state:
     st.session_state["last_refresh"] = None
+
+
+# ── Authentication gate ────────────────────────────────────────────────────────
+
+def _check_auth() -> bool:
+    """
+    Show a branded password gate if ACCESS_PASSWORD is configured.
+
+    Returns True if the user is authenticated (or no password is set).
+    Calls st.stop() and returns False if the login form is shown.
+    """
+    import hmac
+
+    if not ACCESS_PASSWORD:
+        return True  # No password configured — open access (dev / trusted env)
+
+    if st.session_state.get("authenticated"):
+        return True
+
+    # ── Hide sidebar & chrome on the login screen ─────────────────────────────
+    st.markdown("""
+    <style>
+    section[data-testid="stSidebar"] { display: none !important; }
+    #MainMenu, footer, header { visibility: hidden; }
+    .block-container {
+        max-width: 400px !important;
+        margin: 10vh auto 0 !important;
+        padding-top: 0 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Login card ────────────────────────────────────────────────────────────
+    st.markdown(
+        """
+        <div style='text-align:center; margin-bottom:2rem;'>
+            <div style='font-size:2.6rem; font-weight:900; letter-spacing:0.12em;
+                        color:#000; line-height:1;'>adidas</div>
+            <div style='color:#888; font-size:0.78rem; text-transform:uppercase;
+                        letter-spacing:0.14em; margin-top:0.35rem;'>
+                Search Intelligence · LatAm
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container(border=True):
+        st.markdown(
+            "<p style='font-weight:700; font-size:0.95rem; margin-bottom:0.6rem;'>"
+            "🔐 Acceso restringido</p>",
+            unsafe_allow_html=True,
+        )
+        pwd = st.text_input(
+            "Contraseña",
+            type="password",
+            placeholder="Ingresa tu contraseña",
+            label_visibility="collapsed",
+            key="login_pwd_input",
+        )
+        if st.button("Entrar →", type="primary", use_container_width=True):
+            if pwd and hmac.compare_digest(pwd.encode(), ACCESS_PASSWORD.encode()):
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta. Intenta de nuevo.")
+
+        st.caption("Acceso exclusivo para el equipo SEO+ · adidas LatAm")
+
+    st.stop()
+    return False  # never reached — st.stop() halts execution
 
 
 # ── Data loading ───────────────────────────────────────────────────────────────
@@ -387,42 +458,11 @@ def render_sidebar() -> str:
         st.divider()
         st.caption("SEO+ LAM · Adidas Search Intelligence")
 
-        # ── 🔧 Credential diagnostics (remove once auth works) ─────────
-        with st.expander("🔧 Auth diagnostics", expanded=False):
-            import json as _dbg_json, base64 as _dbg_b64, os
-
-            sec = st.secrets.get("gsc_credentials", {})
-            sub_keys = list(sec.keys()) if sec else []
-            st.caption(f"gsc_credentials sub-keys: {sub_keys}")
-
-            if "json_b64" in sec:
-                st.success("✅ json_b64 key found (base64 format)")
-                try:
-                    decoded = _dbg_b64.b64decode(str(sec["json_b64"]).strip())
-                    parsed  = _dbg_json.loads(decoded)
-                    pk = parsed.get("private_key", "")
-                    st.success(f"✅ Decoded OK — keys: {list(parsed.keys())}")
-                    st.caption(f"private_key has real newlines: {chr(10) in pk}")
-                except Exception as exc:
-                    st.error(f"❌ Decode failed: {exc}")
-
-            elif "json" in sec:
-                st.warning("⚠️ json key found (raw JSON format) — prefer json_b64")
-                try:
-                    parsed = _dbg_json.loads(str(sec["json"]))
-                    st.success(f"✅ json.loads() OK — keys: {list(parsed.keys())}")
-                except Exception as exc:
-                    st.error(f"❌ json.loads() FAILED: {exc}")
-            else:
-                st.error("❌ Neither json_b64 nor json key found in secrets")
-
-            st.divider()
-            st.markdown("**config.py CREDENTIALS_DICT:**")
-            if CREDENTIALS_DICT is not None:
-                st.success("✅ Loaded successfully")
-            else:
-                st.error("❌ None — check secret format above")
-                st.caption(f"Fallback file exists: {os.path.exists(CREDENTIALS_FILE)}")
+        # ── Logout button (only shown when password protection is active) ──
+        if ACCESS_PASSWORD and st.session_state.get("authenticated"):
+            if st.button("🔒 Cerrar sesión", use_container_width=True):
+                st.session_state["authenticated"] = False
+                st.rerun()
 
     # Strip emoji prefix before returning clean page name
     return page.split("  ")[-1]
@@ -431,6 +471,9 @@ def render_sidebar() -> str:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
+    # ── Auth gate — must pass before anything else renders ─────────────────────
+    _check_auth()
+
     # Load data into session state on first run
     if st.session_state["df"] is None:
         st.session_state["df"] = load_cached_data()

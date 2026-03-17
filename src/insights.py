@@ -506,80 +506,62 @@ def build_explorer_context(keyword: str, matched_df: pd.DataFrame) -> str:
 # ── Email summary generation ───────────────────────────────────────────────────
 
 _EMAIL_SYSTEM_PROMPT = (
-    "Eres un comunicador ejecutivo senior de adidas para mercados de Latinoamérica. "
-    "Redactas correos ejecutivos claros, concisos y de alto impacto en español. "
-    "Cuando se te proporciona un análisis de IA, lo usas como fuente principal y lo "
-    "condensas en una comunicación ejecutiva potente — no lo repites, lo destila. "
-    "Sé específico con números y acciones. Nunca inventes datos. "
-    "El correo debe ser útil para líderes de marketing, e-commerce o management de adidas LatAm. "
-    "Máximo 20 líneas en total — los ejecutivos valoran la brevedad."
+    "Eres un diseñador de comunicaciones ejecutivas de adidas para Latinoamérica. "
+    "Generas emails HTML profesionales, visuales y de alto impacto. "
+    "REGLA CRÍTICA: usa SOLO inline CSS — Gmail y Outlook no soportan bloques <style>. "
+    "Paleta de color adidas corporativa: "
+    "  • Header/footer: fondo negro #000000, texto blanco #ffffff "
+    "  • Cuerpo: fondo blanco #ffffff, texto principal #111111 "
+    "  • Cards de métricas: fondo #f5f5f5, borde #e0e0e0 "
+    "  • Crecimiento / positivo: #1a7a1a (verde oscuro) "
+    "  • Caída / alerta: #cc2200 (rojo) "
+    "  • Acciones / call-to-action: fondo negro #000, texto blanco "
+    "Cuando recibes un análisis de IA, úsalo como fuente principal — destílalo, no lo copies. "
+    "Sé específico con números. Nunca inventes cifras. "
+    "Responde ÚNICAMENTE con el HTML completo (empieza con <!DOCTYPE html>), sin texto adicional."
 )
 
-# Template when AI insights are available — uses them as primary source
 _EMAIL_TEMPLATE_WITH_INSIGHTS = """\
-Tengo un análisis completo de IA generado para la sección "{view_name}" de adidas LatAm.
+Genera un email HTML ejecutivo en español para adidas LatAm.
+Vista: {view_name}
 
-=== ANÁLISIS IA (fuente principal — destila esto en el correo) ===
+=== ANÁLISIS IA — fuente principal, destila los mejores insights ===
 {insights}
 
-=== DATOS DE CONTEXTO (referencia secundaria) ===
+=== DATOS DE CONTEXTO — referencia para números exactos ===
 {context}
 
-Usando el ANÁLISIS IA como tu fuente principal, redacta un correo ejecutivo en español \
-listo para copiar y enviar. Destila los insights más poderosos en formato ejecutivo — \
-no copies el análisis, transfórmalo en una comunicación de alto impacto.
+Estructura del email (max-width 600px, inline CSS, tabla-based para compatibilidad email):
 
-(NO uses markdown con # ni **, usa SOLO texto plano):
+1. HEADER NEGRO: "adidas" en blanco grande + "Search Intelligence LatAm" pequeño a la derecha + nombre de vista + período
+2. HEADLINE IMPACTANTE: banda oscura #111 con 1 oración que capture el insight más importante (color según positivo/negativo)
+3. RESUMEN EJECUTIVO: 2-3 oraciones narrativas con los números clave del análisis IA
+4. KPI CARDS: fila de 3 cards (tabla 3 columnas) con las métricas más relevantes — número grande en verde o rojo, label debajo, comparación base abajo
+5. HIGHLIGHTS: 3-4 bullets con íconos (▲▼•), cada uno con número concreto y su implicación comercial directa
+6. ACCIONES PRIORITARIAS: sección con fondo negro #000, texto blanco, 3 bullets en negrita — qué hacer esta semana
+7. FOOTER: fondo #f0f0f0, texto gris pequeño "Adidas Search Intelligence Platform · LatAm · {view_name}"
 
-Asunto: [asunto impactante — máximo 12 palabras]
-
-Hola equipo,
-
-[2-3 oraciones que capturen la esencia del análisis — incluye los números más importantes]
-
-Highlights clave:
-- [insight poderoso 1 del análisis con número concreto]
-- [insight poderoso 2 del análisis con número concreto]
-- [insight poderoso 3 del análisis con número concreto]
-- [insight poderoso 4 — solo si aporta valor adicional]
-
-Acciones prioritarias esta semana:
-- [acción más urgente del análisis]
-- [acción de oportunidad del análisis]
-- [acción preventiva del análisis]
-
-Saludos,
-Adidas Search Intelligence Platform\
+Devuelve ÚNICAMENTE el HTML completo (<!DOCTYPE html> ... </html>).\
 """
 
-# Template when no AI insights exist — uses raw data only
 _EMAIL_TEMPLATE_DATA_ONLY = """\
-Aquí están los datos del reporte de búsqueda orgánica adidas LatAm — sección: {view_name}
+Genera un email HTML ejecutivo en español para adidas LatAm.
+Vista: {view_name}
 
+=== DATOS ===
 {context}
 
-Por favor redacta un correo ejecutivo en español con exactamente este formato
-(NO uses markdown con # ni **, usa texto plano):
+Estructura del email (max-width 600px, inline CSS, tabla-based para compatibilidad email):
 
-Asunto: [asunto del correo — máximo 12 palabras]
+1. HEADER NEGRO: "adidas" en blanco grande + "Search Intelligence LatAm" pequeño a la derecha + nombre de vista
+2. HEADLINE IMPACTANTE: banda oscura #111 con 1 oración con el dato más relevante
+3. RESUMEN EJECUTIVO: 2-3 oraciones narrativas con los números clave
+4. KPI CARDS: fila de 3 cards con las métricas más relevantes — número grande en verde o rojo
+5. HIGHLIGHTS: 3-4 bullets con íconos (▲▼•), cada uno con número concreto e implicación
+6. ACCIONES PRIORITARIAS: sección con fondo negro #000, texto blanco, 3 bullets en negrita
+7. FOOTER: fondo #f0f0f0, texto gris pequeño "Adidas Search Intelligence Platform · LatAm"
 
-Hola equipo,
-
-[2-3 oraciones de resumen ejecutivo del período analizado — usa los números del contexto]
-
-Highlights principales:
-- [dato clave 1 con número]
-- [dato clave 2 con número]
-- [dato clave 3 con número]
-- [dato clave 4 con número — opcional]
-
-Acciones sugeridas:
-- [acción concreta 1]
-- [acción concreta 2]
-- [acción concreta 3]
-
-Saludos,
-Adidas Search Intelligence Platform\
+Devuelve ÚNICAMENTE el HTML completo (<!DOCTYPE html> ... </html>).\
 """
 
 
@@ -590,14 +572,12 @@ def get_email_summary(
     insights: str | None = None,
 ) -> str:
     """
-    Call Claude to generate a copy-pasteable Spanish executive email.
+    Call Claude to generate an HTML executive email.
 
-    If `insights` is provided (AI analysis already generated for this view),
-    it is used as the primary source and the email becomes a distillation of
-    those insights rather than a re-analysis of raw data.
+    If `insights` is provided the email is distilled from the AI analysis.
+    Otherwise it is generated from raw data context.
 
-    Returns the email as a plain-text string.
-    Raises on API errors (caller handles display).
+    Returns the HTML string. Raises on API errors (caller handles display).
     """
     import anthropic
 
@@ -618,7 +598,7 @@ def get_email_summary(
 
     message = client.messages.create(
         model      = model,
-        max_tokens = 800,
+        max_tokens = 2000,
         system     = _EMAIL_SYSTEM_PROMPT,
         messages   = [{"role": "user", "content": prompt}],
     )
@@ -632,20 +612,21 @@ def render_email_button(
     insights_cache_key: str | None = None,
 ) -> None:
     """
-    Render the '📧 Preparar Correo' button and copyable text area.
+    Render the '📧 Preparar Correo' button with HTML email preview.
 
     Args:
         view_name:          Human-readable view label included in the Claude prompt.
         context:            Pre-built text summarising this view's current data.
         key_suffix:         Unique suffix to prevent Streamlit widget key collisions.
         insights_cache_key: session_state key where AI insights are cached for this
-                            view (e.g. "ov_ai_insights_text"). When available the
-                            email is distilled from the insights rather than raw data.
+                            view. When available the email is distilled from those
+                            insights for a much richer result.
     """
     import streamlit as st
+    import streamlit.components.v1 as components
     from config import ANTHROPIC_API_KEY
 
-    st.subheader("📧 Preparar Correo Ejecutivo")
+    st.subheader("📧 Correo Ejecutivo")
 
     if not ANTHROPIC_API_KEY:
         st.info(
@@ -654,7 +635,6 @@ def render_email_button(
         )
         return
 
-    # Determine if AI insights are available for this view
     insights_text = (
         st.session_state.get(insights_cache_key)
         if insights_cache_key
@@ -664,19 +644,18 @@ def render_email_button(
 
     if has_insights:
         st.caption(
-            "✨ **Basado en AI Insights** — el correo destilará el análisis de IA ya generado. "
+            "✨ **Basado en AI Insights** — el correo destila el análisis de IA ya generado en un email HTML profesional. "
             "Powered by Claude (Anthropic)."
         )
     else:
         st.caption(
-            "Genera un resumen de esta sección listo para copiar y enviar por correo. "
-            "💡 Genera primero los AI Insights para obtener un correo más potente. "
+            "Genera un email HTML profesional listo para enviar. "
+            "💡 Genera primero los AI Insights para obtener un correo más potente con análisis en profundidad. "
             "Powered by Claude (Anthropic)."
         )
 
     cache_key = f"email_txt_{key_suffix}"
     hash_key  = f"email_hsh_{key_suffix}"
-    # Hash includes insights availability so switching modes invalidates cache
     insights_marker = insights_text[:80] if insights_text else "none"
     data_hash = f"{len(context)}-{context[:80]}-{insights_marker}"
 
@@ -686,7 +665,7 @@ def render_email_button(
 
     col_btn, col_note = st.columns([1, 4])
     with col_btn:
-        btn_label = "📧 Generar Correo" if not has_insights else "✨ Generar desde Insights"
+        btn_label = "✨ Generar desde Insights" if has_insights else "📧 Generar Correo"
         generate = st.button(
             btn_label,
             key=f"email_btn_{key_suffix}",
@@ -699,9 +678,9 @@ def render_email_button(
 
     if generate:
         spinner_msg = (
-            "✨ Destilando insights en correo ejecutivo..."
+            "✨ Diseñando correo ejecutivo desde los insights..."
             if has_insights
-            else "✍️ Redactando correo ejecutivo..."
+            else "✍️ Generando correo ejecutivo..."
         )
         with st.spinner(spinner_msg):
             try:
@@ -715,9 +694,21 @@ def render_email_button(
                 return
 
     if cache_key in st.session_state:
-        st.text_area(
-            "📋 Copia y pega este correo:",
-            value=st.session_state[cache_key],
-            height=360,
-            key=f"email_ta_{key_suffix}",
-        )
+        email_content = st.session_state[cache_key]
+        is_html = email_content.strip().lower().startswith("<!doctype") or \
+                  email_content.strip().lower().startswith("<html")
+
+        if is_html:
+            st.markdown("**Preview del correo:**")
+            # Render HTML email preview inside an iframe-isolated component
+            components.html(email_content, height=620, scrolling=True)
+            with st.expander("📋 Ver código HTML para copiar en tu cliente de correo"):
+                st.code(email_content, language="html")
+        else:
+            # Fallback — plain text (shouldn't happen with new prompts)
+            st.text_area(
+                "📋 Copia y pega este correo:",
+                value=email_content,
+                height=380,
+                key=f"email_ta_{key_suffix}",
+            )
