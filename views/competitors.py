@@ -112,7 +112,8 @@ def _tab_benchmark(api_key: str) -> None:
     st.markdown("## 🏆 Benchmark SEO")
     st.caption(
         "Comparación de autoridad y visibilidad orgánica entre adidas y sus principales "
-        "competidores en el mercado seleccionado. Fuente: **Ahrefs** (datos estimados)."
+        "competidores. Fuente: **Ahrefs** (datos globales estimados — "
+        "el endpoint de métricas no filtra por país)."
     )
 
     with st.container(border=True):
