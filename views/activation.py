@@ -8,6 +8,9 @@ helping the activation team understand which messages drive search behavior
 and which markets respond best to campaign activity.
 """
 
+from datetime import date as _date
+import calendar as _cal
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -31,6 +34,200 @@ from src.utils import (
     C_BLACK, C_MID, C_XLIGHT,
     fmt_delta, fmt_int, fmt_pct,
 )
+
+
+# ── Commercial Event Radar ─────────────────────────────────────────────────────
+# Each entry: event name → (peak_month, peak_day, [keyword_patterns])
+# peak_day is the approximate day the event occurs / peaks each year.
+# Keyword patterns are plain substrings matched case-insensitively.
+
+_COMMERCIAL_EVENTS = {
+    "Día de la Madre":  (5,  11, ["dia de la madre", "día de la madre", "dia madre",
+                                   "regalo mama", "regalos mama", "regalo madre"]),
+    "Cyber Day":        (5,  27, ["cyber day", "cyberday"]),
+    "Hot Sale":         (5,  26, ["hot sale", "hotsale"]),
+    "Día del Padre":    (6,  21, ["dia del padre", "día del padre", "dia padre",
+                                   "regalo papa", "regalos papa", "regalo padre"]),
+    "Cyber WoW":        (10,  5, ["cyber wow", "cyberwow"]),
+    "Buen Fin":         (11, 15, ["buen fin", "buenfin"]),
+    "11.11 Solteros":   (11, 11, ["11.11"]),
+    "Black Friday":     (11, 28, ["black friday", "viernes negro", "blackfriday"]),
+    "Cyber Monday":     (12,  1, ["cyber monday", "cybermonday"]),
+    "Navidad":          (12, 24, ["navidad", "christmas", "regalo navidad", "regalos navidad"]),
+    "Rebajas Enero":    (1,   5, ["rebajas enero", "liquidación enero", "liquidacion enero"]),
+}
+
+
+def _next_event_date(today: _date, month: int, day: int) -> _date:
+    """Return the next calendar occurrence of an annual event."""
+    last_day = _cal.monthrange(today.year, month)[1]
+    clamped   = min(day, last_day)
+    candidate = _date(today.year, month, clamped)
+    if candidate < today:
+        last_day_ny = _cal.monthrange(today.year + 1, month)[1]
+        candidate   = _date(today.year + 1, month, min(day, last_day_ny))
+    return candidate
+
+
+def _alert_level(days_away: int, impressions: int, wow_pct) -> tuple[str, str, str]:
+    """
+    Return (emoji, label, css_color) for the event alert level.
+    Priority: proximity + active signal.
+    """
+    has_signal = impressions > 0
+    growing    = wow_pct is not None and wow_pct > 0
+
+    if days_away <= 21 and has_signal:
+        return "🔴", "URGENTE", "#cc2200"
+    if days_away <= 21:
+        return "🔴", "PRÓXIMO", "#cc2200"
+    if days_away <= 45 and has_signal and growing:
+        return "🟠", "PRECALENTANDO", "#cc6600"
+    if days_away <= 60 and has_signal:
+        return "🟡", "SEÑAL TEMPRANA", "#b38600"
+    if days_away <= 90 or has_signal:
+        return "🟢", "EN RADAR", "#1a7a1a"
+    return "⚪", "SIN SEÑAL", "#aaaaaa"
+
+
+def _event_radar(df: pd.DataFrame) -> None:
+    st.subheader("📡 Radar de Eventos Comerciales")
+    st.caption(
+        "Detecta cuándo los consumidores empiezan a buscar keywords de eventos comerciales — "
+        "anticípate con contenido SEO y activación digital antes que la competencia. "
+        "Señales basadas en impresiones orgánicas WoW por evento."
+    )
+
+    if df.empty or "keyword" not in df.columns:
+        st.info("Carga datos para activar el Radar de Eventos.")
+        return
+
+    today = _date.today()
+    kw_lower = df["keyword"].str.lower()
+
+    event_signals = []
+    for ev_name, (ev_month, ev_day, ev_patterns) in _COMMERCIAL_EVENTS.items():
+        next_date = _next_event_date(today, ev_month, ev_day)
+        days_away = (next_date - today).days
+
+        # Match keywords
+        mask = pd.Series(False, index=df.index)
+        for pat in ev_patterns:
+            mask |= kw_lower.str.contains(pat, na=False, regex=False)
+        event_df = df[mask]
+
+        impressions_curr = 0
+        impressions_prev = 0
+        wow_pct          = None
+        keywords_found   = 0
+        top_kws          = pd.DataFrame()
+
+        if not event_df.empty:
+            keywords_found = event_df["keyword"].nunique()
+            try:
+                wow = compute_wow(event_df, min_clicks=0, min_impressions=0)
+                if not wow.empty:
+                    impressions_curr = int(wow["impressions_curr"].sum())
+                    impressions_prev = int(wow["impressions_prev"].sum())
+                    if impressions_prev > 0:
+                        wow_pct = round(
+                            (impressions_curr - impressions_prev) / impressions_prev * 100, 1
+                        )
+                    elif impressions_curr > 0:
+                        wow_pct = 100.0   # new signal — no prior baseline
+                    top_kws = (
+                        wow.nlargest(8, "impressions_curr")
+                        [["keyword", "impressions_curr", "impressions_prev", "impressions_pct"]]
+                        .copy()
+                    )
+                else:
+                    impressions_curr = int(event_df["impressions"].sum())
+            except Exception:
+                impressions_curr = int(event_df["impressions"].sum())
+
+        emoji, label, color = _alert_level(days_away, impressions_curr, wow_pct)
+
+        event_signals.append({
+            "name":             ev_name,
+            "next_date":        next_date,
+            "days_away":        days_away,
+            "impressions_curr": impressions_curr,
+            "impressions_prev": impressions_prev,
+            "wow_pct":          wow_pct,
+            "keywords_found":   keywords_found,
+            "top_kws":          top_kws,
+            "emoji":            emoji,
+            "label":            label,
+            "color":            color,
+        })
+
+    # Sort: active signals first, then by proximity
+    event_signals.sort(key=lambda e: (0 if e["impressions_curr"] > 0 else 1, e["days_away"]))
+
+    # ── Summary strip — only events with signal or within 120 days ─────────────
+    visible = [e for e in event_signals if e["impressions_curr"] > 0 or e["days_away"] <= 120]
+
+    if not visible:
+        st.info("No hay eventos en los próximos 120 días ni señales activas. Carga más datos.")
+        return
+
+    # Cards — 3 per row
+    for row_start in range(0, len(visible), 3):
+        cols = st.columns(3)
+        for col, ev in zip(cols, visible[row_start : row_start + 3]):
+            with col:
+                with st.container(border=True):
+                    # Alert badge
+                    st.markdown(
+                        f"<span style='background:{ev['color']};color:#fff;padding:2px 10px;"
+                        f"border-radius:4px;font-size:0.72rem;font-weight:700;"
+                        f"letter-spacing:0.06em;'>{ev['emoji']} {ev['label']}</span>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(f"**{ev['name']}**")
+                    st.caption(
+                        f"📅 {ev['next_date'].strftime('%d %b %Y')} · "
+                        f"**{ev['days_away']} días**"
+                    )
+                    if ev["impressions_curr"] > 0:
+                        c1, c2 = st.columns(2)
+                        c1.metric("Impresiones", f"{ev['impressions_curr']:,}")
+                        if ev["wow_pct"] is not None:
+                            arrow = "▲" if ev["wow_pct"] >= 0 else "▼"
+                            c2.metric("WoW", f"{arrow} {abs(ev['wow_pct']):.0f}%")
+                        st.caption(f"🔑 {ev['keywords_found']} keyword(s) detectado(s)")
+                    else:
+                        st.caption("_Sin señal en datos actuales_")
+
+    # ── Keyword detail per active event ────────────────────────────────────────
+    active = [e for e in event_signals if not e["top_kws"].empty]
+    if active:
+        st.markdown("##### 🔍 Detalle de keywords por evento")
+        for ev in active:
+            kw_count = ev["keywords_found"]
+            header   = f"{ev['emoji']} **{ev['name']}** — {kw_count} keyword(s)  ·  {ev['days_away']}d para el evento"
+            with st.expander(header, expanded=(ev["days_away"] <= 45)):
+                detail = ev["top_kws"].rename(columns={
+                    "keyword":          "Keyword",
+                    "impressions_curr": "Esta Semana",
+                    "impressions_prev": "Semana Ant.",
+                    "impressions_pct":  "WoW %",
+                }).copy()
+                # Format WoW %
+                if "WoW %" in detail.columns:
+                    detail["WoW %"] = detail["WoW %"].apply(
+                        lambda v: (
+                            f"▲ {v:.1f}%" if (v is not None and not pd.isna(v) and v >= 0)
+                            else f"▼ {abs(v):.1f}%" if (v is not None and not pd.isna(v))
+                            else "—"
+                        )
+                    )
+                st.dataframe(detail, use_container_width=True, hide_index=True)
+                if ev["wow_pct"] is not None and ev["wow_pct"] > 0 and ev["days_away"] <= 60:
+                    st.info(
+                        f"💡 **Señal activa {ev['days_away']}d antes del evento** — "
+                        "considera activar contenido SEO, landing pages y paid media ahora."
+                    )
 
 
 # ── KPI strip ──────────────────────────────────────────────────────────────────
@@ -283,6 +480,8 @@ def render(df: pd.DataFrame) -> None:
 
     campaign_df = df[df["campaign_category"].notna()].copy()
 
+    _event_radar(df)
+    st.divider()
     _kpi_strip(campaign_df)
     st.divider()
     _category_performance(campaign_df)
